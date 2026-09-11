@@ -1,31 +1,18 @@
 'use strict';
 
-/* ---------- تخزين البيانات (localStorage) ---------- */
+/* ---------- حالة التطبيق ---------- */
 
-const STORAGE_KEYS = {
-  products: 'pos_products',
-  sales: 'pos_sales',
-  settings: 'pos_settings',
-};
+let currentUser = null;
+let currentStoreId = null;
 
-function loadJSON(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch (e) {
-    return fallback;
-  }
-}
+let products = []; // {id, barcode, name, price}
+let sales = []; // {id, date, items, total}
+let settings = { storeName: '', currency: 'د.ع' };
+let cart = []; // {barcode, name, price, qty}  -- محلي فقط، ما يُخزَّن بالسحابة
 
-function saveJSON(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
-}
-
-let products = loadJSON(STORAGE_KEYS.products, []); // {barcode, name, price}
-let sales = loadJSON(STORAGE_KEYS.sales, []); // {id, date, items, total}
-let settings = loadJSON(STORAGE_KEYS.settings, { storeName: '', currency: 'د.ع' });
-
-let cart = []; // {barcode, name, price, qty}
+let unsubProducts = null;
+let unsubSales = null;
+let unsubStore = null;
 
 /* ---------- أدوات مساعدة ---------- */
 
@@ -41,8 +28,219 @@ function cartTotal() {
   return cart.reduce((sum, item) => sum + item.price * item.qty, 0);
 }
 
-function nextInvoiceId() {
-  return 'INV-' + Date.now();
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function mapAuthError(code) {
+  const map = {
+    'auth/email-already-in-use': 'هذا البريد مستخدم مسبقًا',
+    'auth/invalid-email': 'صيغة البريد غير صحيحة',
+    'auth/weak-password': 'كلمة المرور ضعيفة (٦ أحرف على الأقل)',
+    'auth/user-not-found': 'الحساب غير موجود',
+    'auth/wrong-password': 'كلمة المرور غير صحيحة',
+    'auth/invalid-credential': 'بيانات الدخول غير صحيحة',
+    'auth/network-request-failed': 'تحقق من اتصال الإنترنت',
+    'auth/too-many-requests': 'محاولات كثيرة، حاول لاحقًا',
+  };
+  return map[code] || 'حدث خطأ، حاول مرة ثانية';
+}
+
+/* ---------- شاشة تسجيل الدخول ---------- */
+
+const authScreen = document.getElementById('view-auth');
+const appShell = document.getElementById('app-shell');
+const authError = document.getElementById('auth-error');
+const authLoading = document.getElementById('auth-loading');
+
+function showAuthError(msg) {
+  authError.textContent = msg;
+  authError.classList.remove('hidden');
+}
+
+function clearAuthError() {
+  authError.classList.add('hidden');
+}
+
+function setAuthLoading(isLoading) {
+  authLoading.classList.toggle('hidden', !isLoading);
+}
+
+document.querySelectorAll('.auth-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.auth-tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.auth-form').forEach(f => f.classList.add('hidden'));
+    document.getElementById(btn.dataset.tab + '-form').classList.remove('hidden');
+    clearAuthError();
+  });
+});
+
+document.getElementById('login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  clearAuthError();
+  setAuthLoading(true);
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  try {
+    await auth.signInWithEmailAndPassword(email, password);
+  } catch (err) {
+    showAuthError(mapAuthError(err.code));
+  } finally {
+    setAuthLoading(false);
+  }
+});
+
+// نمنع مستمع onAuthStateChanged من محاولة الدخول أثناء إنشاء مستندات المحل/العضوية
+// لأن Firebase يُطلق حدث تسجيل الدخول فور إنشاء الحساب، قبل ما نخلص كتابة بيانات المحل
+let suppressAuthListener = false;
+
+document.getElementById('new-store-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  clearAuthError();
+  setAuthLoading(true);
+  suppressAuthListener = true;
+  const storeName = document.getElementById('ns-store-name').value.trim();
+  const email = document.getElementById('ns-email').value.trim();
+  const password = document.getElementById('ns-password').value;
+  try {
+    const cred = await auth.createUserWithEmailAndPassword(email, password);
+    const uid = cred.user.uid;
+    const storeRef = await db.collection('stores').add({
+      name: storeName,
+      currency: 'د.ع',
+      ownerUid: uid,
+      createdAt: new Date().toISOString(),
+    });
+    await storeRef.collection('members').doc(uid).set({ role: 'owner', email });
+    await db.collection('users').doc(uid).set({ storeId: storeRef.id });
+    currentUser = cred.user;
+    currentStoreId = storeRef.id;
+    enterApp();
+  } catch (err) {
+    showAuthError(mapAuthError(err.code));
+  } finally {
+    suppressAuthListener = false;
+    setAuthLoading(false);
+  }
+});
+
+document.getElementById('join-store-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  clearAuthError();
+  setAuthLoading(true);
+  suppressAuthListener = true;
+  const storeCode = document.getElementById('js-store-code').value.trim();
+  const email = document.getElementById('js-email').value.trim();
+  const password = document.getElementById('js-password').value;
+  try {
+    const storeDoc = await db.collection('stores').doc(storeCode).get();
+    if (!storeDoc.exists) {
+      showAuthError('كود المحل غير صحيح');
+      return;
+    }
+    const cred = await auth.createUserWithEmailAndPassword(email, password);
+    const uid = cred.user.uid;
+    await db.collection('stores').doc(storeCode).collection('members').doc(uid).set({ role: 'cashier', email });
+    await db.collection('users').doc(uid).set({ storeId: storeCode });
+    currentUser = cred.user;
+    currentStoreId = storeCode;
+    enterApp();
+  } catch (err) {
+    showAuthError(mapAuthError(err.code));
+  } finally {
+    suppressAuthListener = false;
+    setAuthLoading(false);
+  }
+});
+
+document.getElementById('btn-logout').addEventListener('click', async () => {
+  if (confirm('تسجيل الخروج؟')) {
+    await auth.signOut();
+  }
+});
+
+/* ---------- مراقبة حالة تسجيل الدخول ---------- */
+
+auth.onAuthStateChanged(async user => {
+  if (suppressAuthListener) return;
+  setAuthLoading(false);
+  if (user) {
+    currentUser = user;
+    try {
+      const userDoc = await db.collection('users').doc(user.uid).get();
+      if (!userDoc.exists) {
+        showAuthError('لا يوجد محل مرتبط بهذا الحساب');
+        await auth.signOut();
+        return;
+      }
+      currentStoreId = userDoc.data().storeId;
+      enterApp();
+    } catch (err) {
+      showAuthError(mapAuthError(err.code));
+    }
+  } else {
+    currentUser = null;
+    currentStoreId = null;
+    detachListeners();
+    products = [];
+    sales = [];
+    cart = [];
+    authScreen.classList.remove('hidden');
+    appShell.classList.add('hidden');
+  }
+});
+
+function detachListeners() {
+  if (unsubProducts) unsubProducts();
+  if (unsubSales) unsubSales();
+  if (unsubStore) unsubStore();
+  unsubProducts = unsubSales = unsubStore = null;
+}
+
+function enterApp() {
+  authScreen.classList.add('hidden');
+  appShell.classList.remove('hidden');
+  clearAuthError();
+  document.getElementById('login-form').reset();
+  document.getElementById('new-store-form').reset();
+  document.getElementById('join-store-form').reset();
+
+  document.getElementById('store-code-text').textContent = currentStoreId;
+
+  unsubStore = db.collection('stores').doc(currentStoreId).onSnapshot(doc => {
+    const data = doc.data();
+    if (!data) return;
+    settings.storeName = data.name || '';
+    settings.currency = data.currency || 'د.ع';
+    document.getElementById('st-store-name').value = settings.storeName;
+    document.getElementById('st-currency').value = settings.currency;
+    document.getElementById('currency-label-1').textContent = settings.currency;
+    renderCart();
+  });
+
+  unsubProducts = db.collection('stores').doc(currentStoreId).collection('products')
+    .onSnapshot(snap => {
+      products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderProducts(document.getElementById('product-search').value);
+    }, err => alert('خطأ بتحميل المنتجات: ' + err.message));
+
+  unsubSales = db.collection('stores').doc(currentStoreId).collection('sales')
+    .onSnapshot(snap => {
+      sales = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      sales.sort((a, b) => new Date(a.date) - new Date(b.date));
+      renderSales();
+    }, err => alert('خطأ بتحميل الفواتير: ' + err.message));
+
+  renderCart();
+  barcodeInput.focus();
 }
 
 /* ---------- التنقل بين الشاشات ---------- */
@@ -224,7 +422,7 @@ document.getElementById('btn-cancel-unknown').addEventListener('click', () => {
   barcodeInput.focus();
 });
 
-unknownForm.addEventListener('submit', e => {
+unknownForm.addEventListener('submit', async e => {
   e.preventDefault();
   const name = document.getElementById('up-name').value.trim();
   const price = Number(document.getElementById('up-price').value);
@@ -232,8 +430,11 @@ unknownForm.addEventListener('submit', e => {
 
   const product = { barcode, name, price };
   if (!manualEntryNoBarcode) {
-    products.push(product);
-    saveJSON(STORAGE_KEYS.products, products);
+    try {
+      await db.collection('stores').doc(currentStoreId).collection('products').add(product);
+    } catch (err) {
+      alert('تعذر حفظ المنتج: ' + err.message);
+    }
   }
   addToCart(product);
   unknownModal.classList.add('hidden');
@@ -245,26 +446,29 @@ unknownForm.addEventListener('submit', e => {
 const receiptModal = document.getElementById('receipt-modal');
 let lastSale = null;
 
-document.getElementById('btn-finish-sale').addEventListener('click', () => {
+document.getElementById('btn-finish-sale').addEventListener('click', async () => {
   if (cart.length === 0) {
     alert('السلة فارغة');
     return;
   }
-  const sale = {
-    id: nextInvoiceId(),
+  const saleData = {
     date: new Date().toISOString(),
     items: cart.map(i => ({ ...i })),
     total: cartTotal(),
   };
-  sales.push(sale);
-  saveJSON(STORAGE_KEYS.sales, sales);
-  lastSale = sale;
 
-  document.getElementById('receipt-total-text').textContent = formatMoney(sale.total) + ' ' + settings.currency;
-  receiptModal.classList.remove('hidden');
+  try {
+    const docRef = await db.collection('stores').doc(currentStoreId).collection('sales').add(saleData);
+    lastSale = { id: docRef.id, ...saleData };
 
-  cart = [];
-  renderCart();
+    document.getElementById('receipt-total-text').textContent = formatMoney(saleData.total) + ' ' + settings.currency;
+    receiptModal.classList.remove('hidden');
+
+    cart = [];
+    renderCart();
+  } catch (err) {
+    alert('تعذر حفظ الفاتورة (تحقق من الإنترنت): ' + err.message);
+  }
 });
 
 document.getElementById('btn-new-sale').addEventListener('click', () => {
@@ -290,24 +494,25 @@ function renderProducts(filter = '') {
   productsBody.innerHTML = '';
   productsEmptyMsg.classList.toggle('hidden', products.length > 0);
 
-  list.forEach((p) => {
-    const realIdx = products.indexOf(p);
+  list.forEach(p => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${escapeHtml(p.barcode)}</td>
       <td>${escapeHtml(p.name)}</td>
       <td>${formatMoney(p.price)}</td>
-      <td><button class="row-delete-btn" data-idx="${realIdx}">✕</button></td>
+      <td><button class="row-delete-btn" data-id="${p.id}">✕</button></td>
     `;
     productsBody.appendChild(tr);
   });
 
   productsBody.querySelectorAll('.row-delete-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       if (confirm('حذف هذا المنتج؟')) {
-        products.splice(Number(btn.dataset.idx), 1);
-        saveJSON(STORAGE_KEYS.products, products);
-        renderProducts(document.getElementById('product-search').value);
+        try {
+          await db.collection('stores').doc(currentStoreId).collection('products').doc(btn.dataset.id).delete();
+        } catch (err) {
+          alert('تعذر الحذف: ' + err.message);
+        }
       }
     });
   });
@@ -317,22 +522,23 @@ document.getElementById('product-search').addEventListener('input', e => {
   renderProducts(e.target.value);
 });
 
-document.getElementById('product-form').addEventListener('submit', e => {
+document.getElementById('product-form').addEventListener('submit', async e => {
   e.preventDefault();
   const barcode = document.getElementById('pf-barcode').value.trim();
   const name = document.getElementById('pf-name').value.trim();
   const price = Number(document.getElementById('pf-price').value);
 
-  const existing = findProductByBarcode(barcode);
-  if (existing) {
-    existing.name = name;
-    existing.price = price;
-  } else {
-    products.push({ barcode, name, price });
+  try {
+    const existing = findProductByBarcode(barcode);
+    if (existing) {
+      await db.collection('stores').doc(currentStoreId).collection('products').doc(existing.id).set({ barcode, name, price });
+    } else {
+      await db.collection('stores').doc(currentStoreId).collection('products').add({ barcode, name, price });
+    }
+    e.target.reset();
+  } catch (err) {
+    alert('تعذر حفظ المنتج: ' + err.message);
   }
-  saveJSON(STORAGE_KEYS.products, products);
-  e.target.reset();
-  renderProducts();
 });
 
 /* ---------- استيراد / تصدير المنتجات عبر إكسل ---------- */
@@ -346,32 +552,35 @@ document.getElementById('import-products-file').addEventListener('change', e => 
   if (!file) return;
 
   const reader = new FileReader();
-  reader.onload = evt => {
+  reader.onload = async evt => {
     const data = new Uint8Array(evt.target.result);
     const workbook = XLSX.read(data, { type: 'array' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
+    const productsCol = db.collection('stores').doc(currentStoreId).collection('products');
     let imported = 0;
-    rows.forEach(row => {
+
+    for (const row of rows) {
       const barcode = String(findColumnValue(row, ['باركود', 'الباركود', 'barcode', 'code', 'الكود'])).trim();
       const name = String(findColumnValue(row, ['اسم', 'الاسم', 'name', 'المنتج'])).trim();
       const price = Number(findColumnValue(row, ['سعر', 'السعر', 'price']));
 
-      if (!barcode || !name || isNaN(price)) return;
+      if (!barcode || !name || isNaN(price)) continue;
 
-      const existing = findProductByBarcode(barcode);
-      if (existing) {
-        existing.name = name;
-        existing.price = price;
-      } else {
-        products.push({ barcode, name, price });
+      try {
+        const existing = findProductByBarcode(barcode);
+        if (existing) {
+          await productsCol.doc(existing.id).set({ barcode, name, price });
+        } else {
+          await productsCol.add({ barcode, name, price });
+        }
+        imported++;
+      } catch (err) {
+        // تجاهل صف فاشل واستمر بالباقي
       }
-      imported++;
-    });
+    }
 
-    saveJSON(STORAGE_KEYS.products, products);
-    renderProducts();
     alert(`تم استيراد ${imported} منتج بنجاح`);
     e.target.value = '';
   };
@@ -438,11 +647,16 @@ document.getElementById('btn-export-all-sales').addEventListener('click', () => 
   exportSalesToExcel(sales, `كل-المبيعات-${todayStr()}`);
 });
 
-document.getElementById('btn-clear-sales').addEventListener('click', () => {
-  if (confirm('حذف كل سجل الفواتير؟ لا يمكن التراجع.')) {
-    sales = [];
-    saveJSON(STORAGE_KEYS.sales, sales);
-    renderSales();
+document.getElementById('btn-clear-sales').addEventListener('click', async () => {
+  if (!confirm('حذف كل سجل الفواتير؟ لا يمكن التراجع.')) return;
+  try {
+    const batch = db.batch();
+    const col = db.collection('stores').doc(currentStoreId).collection('sales');
+    const snap = await col.get();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  } catch (err) {
+    alert('تعذر الحذف: ' + err.message);
   }
 });
 
@@ -481,49 +695,34 @@ function exportSalesToExcel(salesList, filename) {
 
 /* ---------- الإعدادات ---------- */
 
-document.getElementById('st-store-name').value = settings.storeName;
-document.getElementById('st-currency').value = settings.currency;
-
-document.getElementById('settings-form').addEventListener('submit', e => {
+document.getElementById('settings-form').addEventListener('submit', async e => {
   e.preventDefault();
-  settings.storeName = document.getElementById('st-store-name').value.trim();
-  settings.currency = document.getElementById('st-currency').value.trim() || 'د.ع';
-  saveJSON(STORAGE_KEYS.settings, settings);
-  renderCart();
-  alert('تم حفظ الإعدادات');
-});
-
-document.getElementById('btn-reset-all').addEventListener('click', () => {
-  if (confirm('سيتم حذف كل المنتجات والفواتير نهائيًا. متأكد؟')) {
-    products = [];
-    sales = [];
-    cart = [];
-    saveJSON(STORAGE_KEYS.products, products);
-    saveJSON(STORAGE_KEYS.sales, sales);
-    renderProducts();
-    renderSales();
-    renderCart();
-    alert('تم مسح كل البيانات');
+  const storeName = document.getElementById('st-store-name').value.trim();
+  const currency = document.getElementById('st-currency').value.trim() || 'د.ع';
+  try {
+    await db.collection('stores').doc(currentStoreId).update({ name: storeName, currency });
+    alert('تم حفظ الإعدادات');
+  } catch (err) {
+    alert('تعذر الحفظ: ' + err.message);
   }
 });
 
-/* ---------- أدوات عامة ---------- */
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-/* ---------- بدء التشغيل ---------- */
-
-renderCart();
-renderProducts();
-renderSales();
-document.getElementById('currency-label-1').textContent = settings.currency;
-barcodeInput.focus();
+document.getElementById('btn-reset-all').addEventListener('click', async () => {
+  if (!confirm('سيتم حذف كل المنتجات والفواتير نهائيًا لهذا المحل. متأكد؟')) return;
+  try {
+    const batch = db.batch();
+    const storeRef = db.collection('stores').doc(currentStoreId);
+    const [productsSnap, salesSnap] = await Promise.all([
+      storeRef.collection('products').get(),
+      storeRef.collection('sales').get(),
+    ]);
+    productsSnap.docs.forEach(d => batch.delete(d.ref));
+    salesSnap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    cart = [];
+    renderCart();
+    alert('تم مسح كل البيانات');
+  } catch (err) {
+    alert('تعذر الحذف: ' + err.message);
+  }
+});

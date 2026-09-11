@@ -286,3 +286,101 @@ th { color: var(--gray); font-weight: 600; }
 .modal-actions .btn { flex: 1; }
 
 .receipt-total { font-size: 20px; text-align: center; }
+
+/* ---------- شاشة تسجيل الدخول ---------- */
+
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 16px;
+}
+
+.auth-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 100%;
+  max-width: 380px;
+}
+
+.auth-box h1 {
+  text-align: center;
+  margin-top: 0;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: #f0f1f3;
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.auth-tab-btn {
+  flex: 1;
+  padding: 8px 4px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--gray);
+}
+
+.auth-tab-btn.active {
+  background: #fff;
+  color: var(--green);
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0,0,0,.1);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-form input {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.auth-error {
+  color: var(--red);
+  font-size: 13px;
+  text-align: center;
+  margin-top: 12px;
+}
+
+.auth-loading {
+  color: var(--gray);
+  font-size: 13px;
+  text-align: center;
+  margin-top: 12px;
+}
+
+.store-code-box {
+  background: #eef7f1;
+  border: 1px solid var(--green);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.store-code-box b {
+  font-size: 15px;
+  color: var(--green-dark);
+  letter-spacing: 1px;
+}
