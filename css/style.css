@@ -1,19 +1,21 @@
 :root {
-  --green: #1a9c5b;
-  --green-dark: #14794a;
+  --green: #0f9d68;
+  --green-dark: #0b7a51;
+  --indigo: #4f5fe0;
+  --indigo-dark: #3c4ac2;
   --red: #d64545;
   --gray: #6b7280;
-  --bg: #f5f6f8;
+  --bg: #f4f6f8;
   --card: #ffffff;
-  --border: #e2e5e9;
-  --text: #1f2937;
+  --border: #e4e7eb;
+  --text: #1a1f2b;
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+  font-family: "Cairo", "Segoe UI", Tahoma, Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
   padding-bottom: 80px;
@@ -22,18 +24,30 @@ body {
 .hidden { display: none !important; }
 
 .app-header {
-  background: var(--green);
+  background: linear-gradient(135deg, var(--green) 0%, var(--green-dark) 100%);
   color: #fff;
-  padding: 14px 16px;
+  padding: 16px;
   position: sticky;
   top: 0;
   z-index: 10;
-  box-shadow: 0 2px 6px rgba(0,0,0,.15);
+  box-shadow: 0 2px 10px rgba(0,0,0,.18);
 }
 
 .app-header h1 {
   margin: 0 0 6px;
-  font-size: 18px;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: .2px;
+}
+
+.trial-banner {
+  background: #fff7e6;
+  color: #8a5a00;
+  border-bottom: 1px solid #f0d999;
+  text-align: center;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .total-display {
@@ -383,4 +397,115 @@ th { color: var(--gray); font-weight: 600; }
   font-size: 15px;
   color: var(--green-dark);
   letter-spacing: 1px;
+}
+
+/* ---------- شاشة الاشتراك ---------- */
+
+.sub-status-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.sub-status-card.status-trial { border-color: #f0d999; background: #fffaf0; }
+.sub-status-card.status-active { border-color: var(--green); background: #eefbf4; }
+.sub-status-card.status-expired { border-color: var(--red); background: #fdeeee; }
+
+.sub-status-card .status-title {
+  font-weight: 800;
+  font-size: 16px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.plans-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.plan-card {
+  display: block;
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 10px;
+  text-align: center;
+  cursor: pointer;
+  position: relative;
+}
+
+.plan-card input {
+  position: absolute;
+  top: 10px;
+  inset-inline-start: 10px;
+}
+
+.plan-card:has(input:checked) {
+  border-color: var(--indigo);
+  background: #f4f5ff;
+}
+
+.plan-name {
+  font-weight: 800;
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+
+.plan-badge {
+  background: var(--indigo);
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 20px;
+  margin-inline-start: 4px;
+}
+
+.plan-price {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--green-dark);
+}
+
+.payment-methods {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.payment-methods li {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.payment-methods li:last-child { border-bottom: none; }
+
+/* ---------- لوحة الإدارة ---------- */
+
+.admin-shell .app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.admin-shell main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.admin-shell h2 {
+  margin-top: 24px;
 }

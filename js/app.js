@@ -1,5 +1,20 @@
 'use strict';
 
+/* ---------- إعدادات الاشتراك (عدّل الأسعار وأرقام الحسابات هنا) ---------- */
+
+const TRIAL_DAYS = 14;
+
+const PLANS = {
+  monthly: { label: 'شهري', price: 15000, days: 30 },
+  yearly: { label: 'سنوي', price: 150000, days: 365 },
+};
+
+const PAYMENT_INFO = {
+  zaincash: '07709322035',
+  rafidain: 'رقم كارد الرافدين — عدّله بملف js/app.js (PAYMENT_INFO)',
+  fib: 'رقم حساب FIB — عدّله بملف js/app.js (PAYMENT_INFO)',
+};
+
 /* ---------- حالة التطبيق ---------- */
 
 let currentUser = null;
@@ -8,6 +23,8 @@ let currentStoreId = null;
 let products = []; // {id, barcode, name, price}
 let sales = []; // {id, date, items, total}
 let settings = { storeName: '', currency: 'د.ع' };
+let subscription = { status: 'trial', plan: null, trialEndsAt: null, expiresAt: null };
+let accessState = 'trial'; // trial | active | locked
 let cart = []; // {barcode, name, price, qty}  -- محلي فقط، ما يُخزَّن بالسحابة
 
 let unsubProducts = null;
@@ -77,7 +94,7 @@ document.querySelectorAll('.auth-tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.auth-tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    document.querySelectorAll('.auth-form').forEach(f => f.classList.add('hidden'));
+    document.querySelectorAll('.auth-form-tab').forEach(f => f.classList.add('hidden'));
     document.getElementById(btn.dataset.tab + '-form').classList.remove('hidden');
     clearAuthError();
   });
@@ -118,6 +135,12 @@ document.getElementById('new-store-form').addEventListener('submit', async e => 
       currency: 'د.ع',
       ownerUid: uid,
       createdAt: new Date().toISOString(),
+      subscription: {
+        status: 'trial',
+        plan: null,
+        trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 86400000).toISOString(),
+        expiresAt: null,
+      },
     });
     await storeRef.collection('members').doc(uid).set({ role: 'owner', email });
     await db.collection('users').doc(uid).set({ storeId: storeRef.id });
@@ -193,6 +216,9 @@ auth.onAuthStateChanged(async user => {
     products = [];
     sales = [];
     cart = [];
+    subscription = { status: 'trial', plan: null, trialEndsAt: null, expiresAt: null };
+    accessState = 'trial';
+    document.getElementById('trial-banner').classList.add('hidden');
     authScreen.classList.remove('hidden');
     appShell.classList.add('hidden');
   }
@@ -215,6 +241,11 @@ function enterApp() {
 
   document.getElementById('store-code-text').textContent = currentStoreId;
 
+  document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+  document.getElementById('view-sale').classList.remove('hidden');
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.nav-btn[data-view="view-sale"]').classList.add('active');
+
   unsubStore = db.collection('stores').doc(currentStoreId).onSnapshot(doc => {
     const data = doc.data();
     if (!data) return;
@@ -223,6 +254,9 @@ function enterApp() {
     document.getElementById('st-store-name').value = settings.storeName;
     document.getElementById('st-currency').value = settings.currency;
     document.getElementById('currency-label-1').textContent = settings.currency;
+    subscription = data.subscription || { status: 'trial', plan: null, trialEndsAt: null, expiresAt: null };
+    accessState = computeAccessState(subscription);
+    applyAccessGate();
     renderCart();
   });
 
@@ -250,14 +284,101 @@ const navButtons = document.querySelectorAll('.nav-btn');
 
 navButtons.forEach(btn => {
   btn.addEventListener('click', () => {
+    if (accessState === 'locked' && btn.dataset.view !== 'view-subscription') return;
     navButtons.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     views.forEach(v => v.classList.add('hidden'));
     document.getElementById(btn.dataset.view).classList.remove('hidden');
     if (btn.dataset.view === 'view-products') renderProducts();
     if (btn.dataset.view === 'view-reports') renderSales();
+    if (btn.dataset.view === 'view-subscription') renderSubscriptionScreen();
     if (btn.dataset.view === 'view-sale') document.getElementById('barcode-input').focus();
   });
+});
+
+/* ---------- الاشتراك: حساب الحالة وتطبيق القفل ---------- */
+
+function computeAccessState(sub) {
+  const now = new Date();
+  if (sub.status === 'active' && sub.expiresAt && new Date(sub.expiresAt) > now) return 'active';
+  if (sub.status === 'trial' && sub.trialEndsAt && new Date(sub.trialEndsAt) > now) return 'trial';
+  return 'locked';
+}
+
+function applyAccessGate() {
+  const locked = accessState === 'locked';
+
+  if (locked) {
+    views.forEach(v => v.classList.add('hidden'));
+    document.getElementById('view-subscription').classList.remove('hidden');
+    navButtons.forEach(b => b.classList.remove('active'));
+    document.querySelector('.nav-btn[data-view="view-subscription"]').classList.add('active');
+  }
+
+  renderTrialBanner();
+  renderSubscriptionScreen();
+}
+
+function renderTrialBanner() {
+  const banner = document.getElementById('trial-banner');
+  if (accessState === 'trial') {
+    const daysLeft = Math.max(0, Math.ceil((new Date(subscription.trialEndsAt) - new Date()) / 86400000));
+    banner.textContent = `🎁 تجربة مجانية — باقي ${daysLeft} يوم`;
+    banner.classList.remove('hidden');
+  } else {
+    banner.classList.add('hidden');
+  }
+}
+
+function renderSubscriptionScreen() {
+  document.getElementById('plan-price-monthly').textContent = formatMoney(PLANS.monthly.price) + ' ' + settings.currency;
+  document.getElementById('plan-price-yearly').textContent = formatMoney(PLANS.yearly.price) + ' ' + settings.currency;
+  document.getElementById('pm-zaincash').textContent = PAYMENT_INFO.zaincash;
+  document.getElementById('pm-rafidain').textContent = PAYMENT_INFO.rafidain;
+  document.getElementById('pm-fib').textContent = PAYMENT_INFO.fib;
+
+  const card = document.getElementById('sub-status-card');
+  card.classList.remove('status-trial', 'status-active', 'status-expired');
+
+  if (accessState === 'trial') {
+    const daysLeft = Math.max(0, Math.ceil((new Date(subscription.trialEndsAt) - new Date()) / 86400000));
+    card.classList.add('status-trial');
+    card.innerHTML = `<span class="status-title">🎁 فترة تجربة مجانية</span>باقي ${daysLeft} يوم — اختر خطة وادفع بأي وقت قبل انتهائها.`;
+  } else if (accessState === 'active') {
+    card.classList.add('status-active');
+    const until = new Date(subscription.expiresAt).toLocaleDateString('ar-EG');
+    card.innerHTML = `<span class="status-title">✅ الاشتراك مفعّل</span>الخطة: ${PLANS[subscription.plan]?.label || '—'} — ينتهي بتاريخ ${until}`;
+  } else {
+    card.classList.add('status-expired');
+    card.innerHTML = `<span class="status-title">⛔ انتهت الفترة</span>فعّل اشتراكك بالأسفل عشان تكمل استخدام التطبيق.`;
+  }
+}
+
+document.getElementById('subscription-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const plan = document.querySelector('input[name="sub-plan"]:checked').value;
+  const method = document.getElementById('sub-method').value;
+  const reference = document.getElementById('sub-reference').value.trim();
+  const note = document.getElementById('sub-note').value.trim();
+  const msgEl = document.getElementById('sub-form-msg');
+
+  try {
+    await db.collection('subscriptionRequests').add({
+      storeId: currentStoreId,
+      plan,
+      method,
+      reference,
+      note,
+      amount: PLANS[plan].price,
+      status: 'pending',
+      submittedAt: new Date().toISOString(),
+    });
+    msgEl.textContent = '✅ تم إرسال طلبك، بانتظار التأكيد من الإدارة خلال وقت قصير.';
+    msgEl.classList.remove('hidden');
+    e.target.reset();
+  } catch (err) {
+    alert('تعذر إرسال الطلب: ' + err.message);
+  }
 });
 
 /* ---------- وضع المسح: يدوي/ماسح USB مقابل كاميرا ---------- */

@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>محاسب الكاشير</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -19,20 +22,20 @@
       <button class="auth-tab-btn" data-tab="join-store">الانضمام لمحل</button>
     </div>
 
-    <form id="login-form" class="auth-form">
+    <form id="login-form" class="auth-form auth-form-tab">
       <input id="login-email" type="email" placeholder="البريد الإلكتروني" required>
       <input id="login-password" type="password" placeholder="كلمة المرور" required>
       <button type="submit" class="btn primary">دخول</button>
     </form>
 
-    <form id="new-store-form" class="auth-form hidden">
+    <form id="new-store-form" class="auth-form auth-form-tab hidden">
       <input id="ns-store-name" type="text" placeholder="اسم المحل" required>
       <input id="ns-email" type="email" placeholder="البريد الإلكتروني" required>
       <input id="ns-password" type="password" placeholder="كلمة المرور (٦ أحرف فأكثر)" required minlength="6">
       <button type="submit" class="btn primary">إنشاء المحل والحساب</button>
     </form>
 
-    <form id="join-store-form" class="auth-form hidden">
+    <form id="join-store-form" class="auth-form auth-form-tab hidden">
       <input id="js-store-code" type="text" placeholder="كود المحل (تحصل عليه من صاحب المحل)" required>
       <input id="js-email" type="email" placeholder="البريد الإلكتروني" required>
       <input id="js-password" type="password" placeholder="كلمة المرور (٦ أحرف فأكثر)" required minlength="6">
@@ -54,6 +57,8 @@
     <span id="currency-label-1" class="currency">د.ع</span>
   </div>
 </header>
+
+<div id="trial-banner" class="trial-banner hidden"></div>
 
 <main>
 
@@ -183,6 +188,45 @@
     <button id="btn-logout" class="btn secondary">🚪 تسجيل الخروج</button>
   </section>
 
+  <!-- شاشة الاشتراك -->
+  <section id="view-subscription" class="view hidden">
+    <h2>الاشتراك</h2>
+    <div id="sub-status-card" class="sub-status-card"></div>
+
+    <div class="plans-grid" id="plans-grid">
+      <label class="plan-card">
+        <input type="radio" name="sub-plan" value="monthly" checked>
+        <div class="plan-name">شهري</div>
+        <div class="plan-price" id="plan-price-monthly">—</div>
+      </label>
+      <label class="plan-card">
+        <input type="radio" name="sub-plan" value="yearly">
+        <div class="plan-name">سنوي <span class="plan-badge">وفّر</span></div>
+        <div class="plan-price" id="plan-price-yearly">—</div>
+      </label>
+    </div>
+
+    <h3>طرق الدفع</h3>
+    <ul class="payment-methods">
+      <li><b>ZainCash</b> — حوّل على الرقم: <span id="pm-zaincash"></span></li>
+      <li><b>ماستر كارد – مصرف الرافدين</b> — <span id="pm-rafidain"></span></li>
+      <li><b>FIB (المصرف العراقي الأول)</b> — <span id="pm-fib"></span></li>
+    </ul>
+
+    <form id="subscription-form" class="auth-form">
+      <select id="sub-method" required>
+        <option value="">اختر طريقة الدفع اللي حوّلت فيها</option>
+        <option value="zaincash">ZainCash</option>
+        <option value="rafidain">ماستر كارد الرافدين</option>
+        <option value="fib">FIB</option>
+      </select>
+      <input id="sub-reference" type="text" placeholder="رقم العملية / رمز التحويل" required>
+      <input id="sub-note" type="text" placeholder="ملاحظة (اختياري)">
+      <button type="submit" class="btn primary">إرسال إثبات الدفع</button>
+    </form>
+    <p id="sub-form-msg" class="auth-loading hidden"></p>
+  </section>
+
 </main>
 
 <nav class="bottom-nav">
@@ -190,6 +234,7 @@
   <button class="nav-btn" data-view="view-products">📦<span>المنتجات</span></button>
   <button class="nav-btn" data-view="view-reports">📊<span>التقارير</span></button>
   <button class="nav-btn" data-view="view-settings">⚙️<span>الإعدادات</span></button>
+  <button class="nav-btn" data-view="view-subscription">💳<span>الاشتراك</span></button>
 </nav>
 
 </div>
