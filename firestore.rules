@@ -23,7 +23,12 @@ service cloud.firestore {
       allow get: if request.auth != null;
       // list: فقط المسؤول (لوحة الإدارة تحتاج تعرض كل المحلات)
       allow list: if isAdmin();
-      allow update: if isMember(storeId) || isAdmin();
+      // الأعضاء يعدّلون بيانات محلهم العادية بس (اسم، عملة...) — حالة الموافقة والاشتراك
+      // ومالك المحل يغيّرهم المسؤول حصرًا، عشان محل ما يقدر يفعّل نفسه بنفسه
+      allow update: if isAdmin() ||
+        (isMember(storeId) &&
+         !request.resource.data.diff(resource.data).affectedKeys()
+           .hasAny(['approvalStatus', 'subscription', 'ownerUid']));
       allow create: if request.auth != null;
 
       match /members/{uid} {

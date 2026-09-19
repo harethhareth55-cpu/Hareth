@@ -31,6 +31,21 @@
     <button id="admin-logout" class="btn secondary small">🚪 خروج</button>
   </header>
   <main>
+    <h2>محلات جديدة بانتظار الموافقة</h2>
+    <div class="table-wrap">
+      <table id="admin-pending-stores-table">
+        <thead>
+          <tr>
+            <th>اسم المحل</th>
+            <th>تاريخ التسجيل</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="admin-pending-stores-body"></tbody>
+      </table>
+    </div>
+    <p id="admin-pending-stores-empty" class="empty-msg hidden">لا توجد طلبات تسجيل جديدة</p>
+
     <h2>طلبات دفع بانتظار المراجعة</h2>
     <div class="table-wrap">
       <table id="admin-requests-table">

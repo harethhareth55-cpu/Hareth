@@ -1,18 +1,17 @@
 'use strict';
 
 /* ---------- إعدادات الاشتراك (عدّل الأسعار وأرقام الحسابات هنا) ---------- */
-
-const TRIAL_DAYS = 14;
+/* عدد أيام التجربة المجانية معرّف بملف js/admin.js (TRIAL_DAYS) لأن العد يبدأ لحظة موافقة الإدارة */
 
 const PLANS = {
-  monthly: { label: 'شهري', price: 15000, days: 30 },
-  yearly: { label: 'سنوي', price: 150000, days: 365 },
+  monthly: { label: 'شهري', price: 80, currency: '$', days: 30 },
+  yearly: { label: 'سنوي', price: 500, currency: '$', days: 365 },
 };
 
 const PAYMENT_INFO = {
   zaincash: '07709322035',
-  rafidain: 'رقم كارد الرافدين — عدّله بملف js/app.js (PAYMENT_INFO)',
-  fib: 'رقم حساب FIB — عدّله بملف js/app.js (PAYMENT_INFO)',
+  rafidain: '917302257758 (ماستر كارد)',
+  fib: '07709322035',
 };
 
 /* ---------- حالة التطبيق ---------- */
@@ -30,6 +29,7 @@ let cart = []; // {barcode, name, price, qty}  -- محلي فقط، ما يُخ�
 let unsubProducts = null;
 let unsubSales = null;
 let unsubStore = null;
+let unsubPendingApproval = null;
 
 /* ---------- أدوات مساعدة ---------- */
 
@@ -74,6 +74,7 @@ function mapAuthError(code) {
 
 const authScreen = document.getElementById('view-auth');
 const appShell = document.getElementById('app-shell');
+const pendingApprovalScreen = document.getElementById('view-pending-approval');
 const authError = document.getElementById('auth-error');
 const authLoading = document.getElementById('auth-loading');
 
@@ -135,10 +136,11 @@ document.getElementById('new-store-form').addEventListener('submit', async e => 
       currency: 'د.ع',
       ownerUid: uid,
       createdAt: new Date().toISOString(),
+      approvalStatus: 'pending',
       subscription: {
         status: 'trial',
         plan: null,
-        trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 86400000).toISOString(),
+        trialEndsAt: null,
         expiresAt: null,
       },
     });
@@ -146,7 +148,7 @@ document.getElementById('new-store-form').addEventListener('submit', async e => 
     await db.collection('users').doc(uid).set({ storeId: storeRef.id });
     currentUser = cred.user;
     currentStoreId = storeRef.id;
-    enterApp();
+    proceedAfterStoreResolved(storeRef.id);
   } catch (err) {
     showAuthError(mapAuthError(err.code));
   } finally {
@@ -169,13 +171,18 @@ document.getElementById('join-store-form').addEventListener('submit', async e =>
       showAuthError('كود المحل غير صحيح');
       return;
     }
+    const storeApproval = storeDoc.data().approvalStatus || 'approved';
+    if (storeApproval !== 'approved') {
+      showAuthError('هذا المحل لسا قيد المراجعة من الإدارة، ما تكدر تنضم إله الحين');
+      return;
+    }
     const cred = await auth.createUserWithEmailAndPassword(email, password);
     const uid = cred.user.uid;
     await db.collection('stores').doc(storeCode).collection('members').doc(uid).set({ role: 'cashier', email });
     await db.collection('users').doc(uid).set({ storeId: storeCode });
     currentUser = cred.user;
     currentStoreId = storeCode;
-    enterApp();
+    proceedAfterStoreResolved(storeCode);
   } catch (err) {
     showAuthError(mapAuthError(err.code));
   } finally {
@@ -205,7 +212,7 @@ auth.onAuthStateChanged(async user => {
         return;
       }
       currentStoreId = userDoc.data().storeId;
-      enterApp();
+      proceedAfterStoreResolved(currentStoreId);
     } catch (err) {
       showAuthError(mapAuthError(err.code));
     }
@@ -219,6 +226,7 @@ auth.onAuthStateChanged(async user => {
     subscription = { status: 'trial', plan: null, trialEndsAt: null, expiresAt: null };
     accessState = 'trial';
     document.getElementById('trial-banner').classList.add('hidden');
+    hidePendingApprovalScreen();
     authScreen.classList.remove('hidden');
     appShell.classList.add('hidden');
   }
@@ -228,8 +236,48 @@ function detachListeners() {
   if (unsubProducts) unsubProducts();
   if (unsubSales) unsubSales();
   if (unsubStore) unsubStore();
-  unsubProducts = unsubSales = unsubStore = null;
+  if (unsubPendingApproval) unsubPendingApproval();
+  unsubProducts = unsubSales = unsubStore = unsubPendingApproval = null;
 }
+
+/* ---------- مراجعة تسجيل المحل قبل الدخول (يستمع مباشرة، فيدخل تلقائيًا فور الموافقة) ---------- */
+
+function proceedAfterStoreResolved(storeId) {
+  if (unsubPendingApproval) unsubPendingApproval();
+
+  unsubPendingApproval = db.collection('stores').doc(storeId).onSnapshot(doc => {
+    const approvalStatus = doc.exists ? (doc.data().approvalStatus || 'approved') : 'approved';
+
+    if (approvalStatus === 'pending') {
+      showPendingApprovalScreen('pending');
+    } else if (approvalStatus === 'rejected') {
+      showPendingApprovalScreen('rejected');
+    } else {
+      if (unsubPendingApproval) { unsubPendingApproval(); unsubPendingApproval = null; }
+      hidePendingApprovalScreen();
+      enterApp();
+    }
+  }, err => alert('خطأ بالتحقق من حالة المحل: ' + err.message));
+}
+
+function showPendingApprovalScreen(status) {
+  authScreen.classList.add('hidden');
+  appShell.classList.add('hidden');
+  pendingApprovalScreen.classList.remove('hidden');
+
+  const content = document.getElementById('pending-approval-content');
+  if (status === 'pending') {
+    content.innerHTML = '<p>⏳ طلب تسجيل محلك قيد المراجعة من الإدارة حاليًا. بترجع تقدر تسجّل دخول عادي أول ما توافَق عليه.</p>';
+  } else {
+    content.innerHTML = '<p>⛔ تم رفض طلب تسجيل هذا المحل.</p>';
+  }
+}
+
+function hidePendingApprovalScreen() {
+  pendingApprovalScreen.classList.add('hidden');
+}
+
+document.getElementById('btn-pending-logout').addEventListener('click', () => auth.signOut());
 
 function enterApp() {
   authScreen.classList.add('hidden');
@@ -331,8 +379,8 @@ function renderTrialBanner() {
 }
 
 function renderSubscriptionScreen() {
-  document.getElementById('plan-price-monthly').textContent = formatMoney(PLANS.monthly.price) + ' ' + settings.currency;
-  document.getElementById('plan-price-yearly').textContent = formatMoney(PLANS.yearly.price) + ' ' + settings.currency;
+  document.getElementById('plan-price-monthly').textContent = PLANS.monthly.currency + formatMoney(PLANS.monthly.price);
+  document.getElementById('plan-price-yearly').textContent = PLANS.yearly.currency + formatMoney(PLANS.yearly.price);
   document.getElementById('pm-zaincash').textContent = PAYMENT_INFO.zaincash;
   document.getElementById('pm-rafidain').textContent = PAYMENT_INFO.rafidain;
   document.getElementById('pm-fib').textContent = PAYMENT_INFO.fib;

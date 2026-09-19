@@ -3,6 +3,9 @@
 /* عدّل هذا البريد إذا تغيّر بريد الإدارة (ولازم تعدّل نفس القيمة بملف firestore.rules) */
 const ADMIN_EMAIL = 'harethhareth55@gmail.com';
 
+/* عدد أيام التجربة المجانية — تبدأ لحظة ما توافق على تسجيل المحل */
+const TRIAL_DAYS = 14;
+
 const PLAN_DAYS = { monthly: 30, yearly: 365 };
 const PLAN_LABELS = { monthly: 'شهري', yearly: 'سنوي' };
 const METHOD_LABELS = { zaincash: 'ZainCash', rafidain: 'ماستر كارد الرافدين', fib: 'FIB' };
@@ -52,6 +55,7 @@ let unsubRequests = null;
 let unsubStores = null;
 let storesCache = {};
 let pendingRequests = [];
+let pendingStores = [];
 
 auth.onAuthStateChanged(user => {
   if (user && user.email === ADMIN_EMAIL) {
@@ -70,6 +74,7 @@ auth.onAuthStateChanged(user => {
     unsubRequests = unsubStores = null;
     storesCache = {};
     pendingRequests = [];
+    pendingStores = [];
   }
 });
 
@@ -77,6 +82,8 @@ function loadData() {
   unsubStores = db.collection('stores').onSnapshot(snap => {
     storesCache = {};
     snap.docs.forEach(d => { storesCache[d.id] = { id: d.id, ...d.data() }; });
+    pendingStores = Object.values(storesCache).filter(s => s.approvalStatus === 'pending');
+    renderPendingStores();
     renderStores();
     renderRequests();
   }, err => alert('خطأ بتحميل المحلات: ' + err.message));
@@ -87,6 +94,53 @@ function loadData() {
       pendingRequests = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       renderRequests();
     }, err => alert('خطأ بتحميل الطلبات: ' + err.message));
+}
+
+function renderPendingStores() {
+  const body = document.getElementById('admin-pending-stores-body');
+  body.innerHTML = '';
+  document.getElementById('admin-pending-stores-empty').classList.toggle('hidden', pendingStores.length > 0);
+
+  pendingStores.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(s.name)}</td>
+      <td>${s.createdAt ? new Date(s.createdAt).toLocaleString('ar-EG') : '—'}</td>
+      <td>
+        <button class="btn primary small" data-approve-store="${s.id}">قبول</button>
+        <button class="btn danger small" data-reject-store="${s.id}">رفض</button>
+      </td>`;
+    body.appendChild(tr);
+  });
+
+  body.querySelectorAll('[data-approve-store]').forEach(btn => {
+    btn.addEventListener('click', () => approveStore(btn.dataset.approveStore));
+  });
+  body.querySelectorAll('[data-reject-store]').forEach(btn => {
+    btn.addEventListener('click', () => rejectStore(btn.dataset.rejectStore));
+  });
+}
+
+async function approveStore(storeId) {
+  if (!confirm('الموافقة على تسجيل هذا المحل وبدء فترة التجربة المجانية له؟')) return;
+  const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 86400000).toISOString();
+  try {
+    await db.collection('stores').doc(storeId).update({
+      approvalStatus: 'approved',
+      subscription: { status: 'trial', plan: null, trialEndsAt, expiresAt: null },
+    });
+  } catch (err) {
+    alert('خطأ: ' + err.message);
+  }
+}
+
+async function rejectStore(storeId) {
+  if (!confirm('رفض تسجيل هذا المحل؟')) return;
+  try {
+    await db.collection('stores').doc(storeId).update({ approvalStatus: 'rejected' });
+  } catch (err) {
+    alert('خطأ: ' + err.message);
+  }
 }
 
 function renderRequests() {
@@ -100,7 +154,7 @@ function renderRequests() {
     tr.innerHTML = `
       <td>${store ? escapeHtml(store.name) : r.storeId}</td>
       <td>${PLAN_LABELS[r.plan] || r.plan}</td>
-      <td>${Number(r.amount || 0).toLocaleString('en-US')}</td>
+      <td>$${Number(r.amount || 0).toLocaleString('en-US')}</td>
       <td>${METHOD_LABELS[r.method] || r.method}</td>
       <td>${escapeHtml(r.reference)}</td>
       <td>${escapeHtml(r.note || '')}</td>
