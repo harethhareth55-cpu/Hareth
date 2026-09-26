@@ -100,12 +100,15 @@ function setAuthLoading(isLoading) {
   authLoading.classList.toggle('hidden', !isLoading);
 }
 
+function switchAuthTab(tabName) {
+  document.querySelectorAll('.auth-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
+  document.querySelectorAll('.auth-form-tab').forEach(f => f.classList.add('hidden'));
+  document.getElementById(tabName + '-form').classList.remove('hidden');
+}
+
 document.querySelectorAll('.auth-tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.auth-tab-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    document.querySelectorAll('.auth-form-tab').forEach(f => f.classList.add('hidden'));
-    document.getElementById(btn.dataset.tab + '-form').classList.remove('hidden');
+    switchAuthTab(btn.dataset.tab);
     clearAuthError();
   });
 });
@@ -177,7 +180,13 @@ document.getElementById('new-store-form').addEventListener('submit', async e => 
     currentStoreId = storeRef.id;
     proceedAfterStoreResolved(storeRef.id);
   } catch (err) {
-    showAuthError(mapAuthError(err.code));
+    if (err.code === 'auth/email-already-in-use') {
+      switchAuthTab('login');
+      document.getElementById('login-email').value = email;
+      showAuthError('هذا البريد عنده حساب مسجّل مسبقًا. سجّل دخول بكلمة مرورك، أو اضغط "نسيت كلمة المرور؟" إذا ما تتذكرها.');
+    } else {
+      showAuthError(mapAuthError(err.code));
+    }
   } finally {
     suppressAuthListener = false;
     setAuthLoading(false);
@@ -211,7 +220,13 @@ document.getElementById('join-store-form').addEventListener('submit', async e =>
     currentStoreId = storeCode;
     proceedAfterStoreResolved(storeCode);
   } catch (err) {
-    showAuthError(mapAuthError(err.code));
+    if (err.code === 'auth/email-already-in-use') {
+      switchAuthTab('login');
+      document.getElementById('login-email').value = email;
+      showAuthError('هذا البريد عنده حساب مسجّل مسبقًا. سجّل دخول بكلمة مرورك، أو اضغط "نسيت كلمة المرور؟" إذا ما تتذكرها.');
+    } else {
+      showAuthError(mapAuthError(err.code));
+    }
   } finally {
     suppressAuthListener = false;
     setAuthLoading(false);
