@@ -17,16 +17,25 @@ function escapeHtml(str) {
 }
 
 const authError = document.getElementById('admin-auth-error');
+const authSuccess = document.getElementById('admin-auth-success');
 const authLoading = document.getElementById('admin-auth-loading');
 
 function showAuthError(msg) {
+  authSuccess.classList.add('hidden');
   authError.textContent = msg;
   authError.classList.remove('hidden');
+}
+
+function showAuthSuccess(msg) {
+  authError.classList.add('hidden');
+  authSuccess.textContent = msg;
+  authSuccess.classList.remove('hidden');
 }
 
 document.getElementById('admin-login-form').addEventListener('submit', async e => {
   e.preventDefault();
   authError.classList.add('hidden');
+  authSuccess.classList.add('hidden');
   authLoading.classList.remove('hidden');
   const email = document.getElementById('admin-email').value.trim();
   const password = document.getElementById('admin-password').value;
@@ -42,6 +51,25 @@ document.getElementById('admin-login-form').addEventListener('submit', async e =
         throw err;
       }
     }
+  } catch (err) {
+    showAuthError('خطأ: ' + err.message);
+  } finally {
+    authLoading.classList.add('hidden');
+  }
+});
+
+document.getElementById('btn-admin-forgot-password').addEventListener('click', async () => {
+  authError.classList.add('hidden');
+  authSuccess.classList.add('hidden');
+  const email = document.getElementById('admin-email').value.trim();
+  if (!email) {
+    showAuthError('اكتب بريدك الإلكتروني بالحقل فوق أول');
+    return;
+  }
+  authLoading.classList.remove('hidden');
+  try {
+    await auth.sendPasswordResetEmail(email);
+    showAuthSuccess('✅ تم إرسال رابط استعادة كلمة المرور لبريدك.');
   } catch (err) {
     showAuthError('خطأ: ' + err.message);
   } finally {

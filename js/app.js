@@ -76,15 +76,24 @@ const authScreen = document.getElementById('view-auth');
 const appShell = document.getElementById('app-shell');
 const pendingApprovalScreen = document.getElementById('view-pending-approval');
 const authError = document.getElementById('auth-error');
+const authSuccess = document.getElementById('auth-success');
 const authLoading = document.getElementById('auth-loading');
 
 function showAuthError(msg) {
+  authSuccess.classList.add('hidden');
   authError.textContent = msg;
   authError.classList.remove('hidden');
 }
 
+function showAuthSuccess(msg) {
+  authError.classList.add('hidden');
+  authSuccess.textContent = msg;
+  authSuccess.classList.remove('hidden');
+}
+
 function clearAuthError() {
   authError.classList.add('hidden');
+  authSuccess.classList.add('hidden');
 }
 
 function setAuthLoading(isLoading) {
@@ -109,6 +118,24 @@ document.getElementById('login-form').addEventListener('submit', async e => {
   const password = document.getElementById('login-password').value;
   try {
     await auth.signInWithEmailAndPassword(email, password);
+  } catch (err) {
+    showAuthError(mapAuthError(err.code));
+  } finally {
+    setAuthLoading(false);
+  }
+});
+
+document.getElementById('btn-forgot-password').addEventListener('click', async () => {
+  clearAuthError();
+  const email = document.getElementById('login-email').value.trim();
+  if (!email) {
+    showAuthError('اكتب بريدك الإلكتروني بالحقل فوق أول، وبعدين اضغط "نسيت كلمة المرور"');
+    return;
+  }
+  setAuthLoading(true);
+  try {
+    await auth.sendPasswordResetEmail(email);
+    showAuthSuccess('✅ تم إرسال رابط استعادة كلمة المرور لبريدك. افتح بريدك واضغط الرابط.');
   } catch (err) {
     showAuthError(mapAuthError(err.code));
   } finally {

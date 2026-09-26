@@ -373,6 +373,24 @@ th { color: var(--gray); font-weight: 600; }
   margin-top: 12px;
 }
 
+.auth-success {
+  color: var(--green-dark);
+  font-size: 13px;
+  text-align: center;
+  margin-top: 12px;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--indigo);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px 0;
+  align-self: center;
+}
+
 .auth-loading {
   color: var(--gray);
   font-size: 13px;
