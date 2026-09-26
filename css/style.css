@@ -366,6 +366,34 @@ th { color: var(--gray); font-weight: 600; }
   font-size: 15px;
 }
 
+.phone-input-row {
+  display: flex;
+  gap: 8px;
+  direction: ltr;
+}
+
+.phone-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f0f1f3;
+  font-size: 15px;
+  color: var(--gray);
+  font-weight: 700;
+}
+
+.phone-input-row input {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 15px;
+  text-align: left;
+  direction: ltr;
+}
+
 .auth-error {
   color: var(--red);
   font-size: 13px;

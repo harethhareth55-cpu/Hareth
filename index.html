@@ -11,7 +11,7 @@
 </head>
 <body>
 
-<!-- شاشة تسجيل الدخول / إنشاء حساب -->
+<!-- شاشة تسجيل الدخول / إنشاء حساب (برقم الهاتف + رمز تحقق SMS) -->
 <section id="view-auth" class="auth-screen">
   <div class="auth-box">
     <h1>🧾 محاسب الكاشير</h1>
@@ -23,25 +23,39 @@
     </div>
 
     <form id="login-form" class="auth-form auth-form-tab">
-      <input id="login-email" type="email" placeholder="البريد الإلكتروني" required>
-      <input id="login-password" type="password" placeholder="كلمة المرور" required>
-      <button type="submit" class="btn primary">دخول</button>
-      <button type="button" id="btn-forgot-password" class="link-btn">نسيت كلمة المرور؟</button>
+      <div class="phone-input-row">
+        <span class="phone-prefix">+964</span>
+        <input id="login-phone" type="tel" inputmode="numeric" placeholder="٧٧٠١٢٣٤٥٦٧" required>
+      </div>
+      <button type="submit" class="btn primary">إرسال رمز التحقق</button>
     </form>
 
     <form id="new-store-form" class="auth-form auth-form-tab hidden">
       <input id="ns-store-name" type="text" placeholder="اسم المحل" required>
-      <input id="ns-email" type="email" placeholder="البريد الإلكتروني" required>
-      <input id="ns-password" type="password" placeholder="كلمة المرور (٦ أحرف فأكثر)" required minlength="6">
-      <button type="submit" class="btn primary">إنشاء المحل والحساب</button>
+      <div class="phone-input-row">
+        <span class="phone-prefix">+964</span>
+        <input id="ns-phone" type="tel" inputmode="numeric" placeholder="٧٧٠١٢٣٤٥٦٧" required>
+      </div>
+      <button type="submit" class="btn primary">إرسال رمز التحقق</button>
     </form>
 
     <form id="join-store-form" class="auth-form auth-form-tab hidden">
       <input id="js-store-code" type="text" placeholder="كود المحل (تحصل عليه من صاحب المحل)" required>
-      <input id="js-email" type="email" placeholder="البريد الإلكتروني" required>
-      <input id="js-password" type="password" placeholder="كلمة المرور (٦ أحرف فأكثر)" required minlength="6">
-      <button type="submit" class="btn primary">انضمام كـكاشير</button>
+      <div class="phone-input-row">
+        <span class="phone-prefix">+964</span>
+        <input id="js-phone" type="tel" inputmode="numeric" placeholder="٧٧٠١٢٣٤٥٦٧" required>
+      </div>
+      <button type="submit" class="btn primary">إرسال رمز التحقق</button>
     </form>
+
+    <form id="otp-form" class="auth-form hidden">
+      <p class="hint" id="otp-sent-to"></p>
+      <input id="otp-code" type="tel" inputmode="numeric" placeholder="رمز التحقق (٦ أرقام)" required maxlength="6">
+      <button type="submit" class="btn primary">تأكيد ودخول</button>
+      <button type="button" id="btn-otp-back" class="link-btn">الرقم غير صحيح؟ عدّله</button>
+    </form>
+
+    <div id="recaptcha-container"></div>
 
     <p id="auth-error" class="auth-error hidden"></p>
     <p id="auth-success" class="auth-success hidden"></p>

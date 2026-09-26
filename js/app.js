@@ -66,8 +66,22 @@ function mapAuthError(code) {
     'auth/invalid-credential': 'بيانات الدخول غير صحيحة',
     'auth/network-request-failed': 'تحقق من اتصال الإنترنت',
     'auth/too-many-requests': 'محاولات كثيرة، حاول لاحقًا',
+    'auth/invalid-phone-number': 'رقم الهاتف غير صحيح، تأكد من كتابته صح',
+    'auth/invalid-verification-code': 'رمز التحقق غير صحيح',
+    'auth/code-expired': 'انتهت صلاحية الرمز، اطلب رمز جديد',
+    'auth/quota-exceeded': 'تجاوزنا الحد المسموح من رسائل التحقق حاليًا، حاول لاحقًا',
+    'auth/missing-phone-number': 'اكتب رقم الهاتف',
   };
   return map[code] || 'حدث خطأ، حاول مرة ثانية';
+}
+
+function normalizePhone(rawPhone) {
+  let digits = rawPhone.trim().replace(/[^\d]/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('964')) digits = digits.slice(3);
+  if (digits.startsWith('0')) digits = digits.slice(1);
+  if (digits.length < 9) return null;
+  return '+964' + digits;
 }
 
 /* ---------- شاشة تسجيل الدخول ---------- */
@@ -113,120 +127,164 @@ document.querySelectorAll('.auth-tab-btn').forEach(btn => {
   });
 });
 
-document.getElementById('login-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  clearAuthError();
-  setAuthLoading(true);
-  const email = document.getElementById('login-email').value.trim();
-  const password = document.getElementById('login-password').value;
-  try {
-    await auth.signInWithEmailAndPassword(email, password);
-  } catch (err) {
-    showAuthError(mapAuthError(err.code));
-  } finally {
-    setAuthLoading(false);
-  }
-});
-
-document.getElementById('btn-forgot-password').addEventListener('click', async () => {
-  clearAuthError();
-  const email = document.getElementById('login-email').value.trim();
-  if (!email) {
-    showAuthError('اكتب بريدك الإلكتروني بالحقل فوق أول، وبعدين اضغط "نسيت كلمة المرور"');
-    return;
-  }
-  setAuthLoading(true);
-  try {
-    await auth.sendPasswordResetEmail(email);
-    showAuthSuccess('✅ تم إرسال رابط استعادة كلمة المرور لبريدك. افتح بريدك واضغط الرابط.');
-  } catch (err) {
-    showAuthError(mapAuthError(err.code));
-  } finally {
-    setAuthLoading(false);
-  }
-});
-
 // نمنع مستمع onAuthStateChanged من محاولة الدخول أثناء إنشاء مستندات المحل/العضوية
-// لأن Firebase يُطلق حدث تسجيل الدخول فور إنشاء الحساب، قبل ما نخلص كتابة بيانات المحل
+// لأن Firebase يُطلق حدث تسجيل الدخول فور نجاح التحقق من الرمز، قبل ما نخلص كتابة بيانات المحل
 let suppressAuthListener = false;
 
-document.getElementById('new-store-form').addEventListener('submit', async e => {
-  e.preventDefault();
+/* ---------- تسجيل الدخول برقم الهاتف + رمز تحقق SMS ---------- */
+
+let confirmationResult = null;
+let pendingAuthContext = null; // { type: 'login'|'new-store'|'join-store', phone, storeName?, storeCode? }
+
+function getRecaptchaVerifier() {
+  if (!window.recaptchaVerifier) {
+    window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { size: 'invisible' });
+  }
+  return window.recaptchaVerifier;
+}
+
+async function resetRecaptcha() {
+  if (window.recaptchaVerifier) {
+    try { await window.recaptchaVerifier.clear(); } catch (e) { /* تجاهل */ }
+    window.recaptchaVerifier = null;
+  }
+}
+
+async function sendOtp(rawPhone, context) {
+  const phone = normalizePhone(rawPhone);
+  if (!phone) {
+    showAuthError('رقم الهاتف غير صحيح، اكتبه بدون الصفر الأول (مثال: ٧٧٠١٢٣٤٥٦٧)');
+    return;
+  }
   clearAuthError();
   setAuthLoading(true);
-  suppressAuthListener = true;
-  const storeName = document.getElementById('ns-store-name').value.trim();
-  const email = document.getElementById('ns-email').value.trim();
-  const password = document.getElementById('ns-password').value;
   try {
-    const cred = await auth.createUserWithEmailAndPassword(email, password);
-    const uid = cred.user.uid;
-    const storeRef = await db.collection('stores').add({
-      name: storeName,
-      currency: 'د.ع',
-      ownerUid: uid,
-      createdAt: new Date().toISOString(),
-      approvalStatus: 'pending',
-      subscription: {
-        status: 'trial',
-        plan: null,
-        trialEndsAt: null,
-        expiresAt: null,
-      },
-    });
-    await storeRef.collection('members').doc(uid).set({ role: 'owner', email });
-    await db.collection('users').doc(uid).set({ storeId: storeRef.id });
-    currentUser = cred.user;
-    currentStoreId = storeRef.id;
-    proceedAfterStoreResolved(storeRef.id);
+    const verifier = getRecaptchaVerifier();
+    confirmationResult = await auth.signInWithPhoneNumber(phone, verifier);
+    pendingAuthContext = { ...context, phone };
+    document.querySelectorAll('.auth-form-tab').forEach(f => f.classList.add('hidden'));
+    document.getElementById('otp-form').classList.remove('hidden');
+    document.getElementById('otp-sent-to').textContent = `تم إرسال رمز التحقق إلى ${phone}`;
+    document.getElementById('otp-code').value = '';
+    document.getElementById('otp-code').focus();
   } catch (err) {
-    if (err.code === 'auth/email-already-in-use') {
-      switchAuthTab('login');
-      document.getElementById('login-email').value = email;
-      showAuthError('هذا البريد عنده حساب مسجّل مسبقًا. سجّل دخول بكلمة مرورك، أو اضغط "نسيت كلمة المرور؟" إذا ما تتذكرها.');
-    } else {
-      showAuthError(mapAuthError(err.code));
-    }
+    showAuthError(mapAuthError(err.code));
+    await resetRecaptcha();
   } finally {
-    suppressAuthListener = false;
     setAuthLoading(false);
   }
+}
+
+document.getElementById('login-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const phone = document.getElementById('login-phone').value;
+  sendOtp(phone, { type: 'login' });
 });
 
-document.getElementById('join-store-form').addEventListener('submit', async e => {
+document.getElementById('new-store-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const storeName = document.getElementById('ns-store-name').value.trim();
+  const phone = document.getElementById('ns-phone').value;
+  sendOtp(phone, { type: 'new-store', storeName });
+});
+
+document.getElementById('join-store-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const storeCode = document.getElementById('js-store-code').value.trim();
+  const phone = document.getElementById('js-phone').value;
+  sendOtp(phone, { type: 'join-store', storeCode });
+});
+
+document.getElementById('btn-otp-back').addEventListener('click', async () => {
+  clearAuthError();
+  document.getElementById('otp-form').classList.add('hidden');
+  const activeTab = document.querySelector('.auth-tab-btn.active').dataset.tab;
+  switchAuthTab(activeTab);
+  confirmationResult = null;
+  pendingAuthContext = null;
+  await resetRecaptcha();
+});
+
+document.getElementById('otp-form').addEventListener('submit', async e => {
   e.preventDefault();
   clearAuthError();
+  if (!confirmationResult || !pendingAuthContext) {
+    showAuthError('انتهت الجلسة، اطلب رمز جديد');
+    return;
+  }
+  const code = document.getElementById('otp-code').value.trim();
   setAuthLoading(true);
   suppressAuthListener = true;
-  const storeCode = document.getElementById('js-store-code').value.trim();
-  const email = document.getElementById('js-email').value.trim();
-  const password = document.getElementById('js-password').value;
   try {
-    const storeDoc = await db.collection('stores').doc(storeCode).get();
-    if (!storeDoc.exists) {
-      showAuthError('كود المحل غير صحيح');
-      return;
-    }
-    const storeApproval = storeDoc.data().approvalStatus || 'approved';
-    if (storeApproval !== 'approved') {
-      showAuthError('هذا المحل لسا قيد المراجعة من الإدارة، ما تكدر تنضم إله الحين');
-      return;
-    }
-    const cred = await auth.createUserWithEmailAndPassword(email, password);
+    const cred = await confirmationResult.confirm(code);
     const uid = cred.user.uid;
-    await db.collection('stores').doc(storeCode).collection('members').doc(uid).set({ role: 'cashier', email });
-    await db.collection('users').doc(uid).set({ storeId: storeCode });
-    currentUser = cred.user;
-    currentStoreId = storeCode;
-    proceedAfterStoreResolved(storeCode);
-  } catch (err) {
-    if (err.code === 'auth/email-already-in-use') {
-      switchAuthTab('login');
-      document.getElementById('login-email').value = email;
-      showAuthError('هذا البريد عنده حساب مسجّل مسبقًا. سجّل دخول بكلمة مرورك، أو اضغط "نسيت كلمة المرور؟" إذا ما تتذكرها.');
-    } else {
-      showAuthError(mapAuthError(err.code));
+    const userDoc = await db.collection('users').doc(uid).get();
+    const hasStore = userDoc.exists;
+    const ctx = pendingAuthContext;
+
+    if (ctx.type === 'login') {
+      if (!hasStore) {
+        showAuthError('هذا الرقم غير مسجّل بأي محل. روح لتبويب "محل جديد" للتسجيل.');
+        await auth.signOut();
+        return;
+      }
+      currentUser = cred.user;
+      currentStoreId = userDoc.data().storeId;
+      proceedAfterStoreResolved(currentStoreId);
+
+    } else if (ctx.type === 'new-store') {
+      if (hasStore) {
+        // الرقم عنده محل مسجّل مسبقًا (نفس الشخص جرب "محل جديد" بالخطأ) — وديه لمحله مباشرة
+        currentUser = cred.user;
+        currentStoreId = userDoc.data().storeId;
+        proceedAfterStoreResolved(currentStoreId);
+        return;
+      }
+      const storeRef = await db.collection('stores').add({
+        name: ctx.storeName,
+        currency: 'د.ع',
+        ownerUid: uid,
+        phone: ctx.phone,
+        createdAt: new Date().toISOString(),
+        approvalStatus: 'pending',
+        subscription: { status: 'trial', plan: null, trialEndsAt: null, expiresAt: null },
+      });
+      await storeRef.collection('members').doc(uid).set({ role: 'owner', phone: ctx.phone });
+      await db.collection('users').doc(uid).set({ storeId: storeRef.id });
+      currentUser = cred.user;
+      currentStoreId = storeRef.id;
+      proceedAfterStoreResolved(storeRef.id);
+
+    } else if (ctx.type === 'join-store') {
+      if (hasStore) {
+        showAuthError('هذا الرقم عنده محل مسجّل مسبقًا، ما يقدر ينضم لمحل ثاني بنفس الرقم');
+        await auth.signOut();
+        return;
+      }
+      const storeCode = ctx.storeCode;
+      const storeDoc = await db.collection('stores').doc(storeCode).get();
+      if (!storeDoc.exists) {
+        showAuthError('كود المحل غير صحيح');
+        await auth.signOut();
+        return;
+      }
+      const approval = storeDoc.data().approvalStatus || 'approved';
+      if (approval !== 'approved') {
+        showAuthError('هذا المحل لسا قيد المراجعة من الإدارة، ما تكدر تنضم إله الحين');
+        await auth.signOut();
+        return;
+      }
+      await db.collection('stores').doc(storeCode).collection('members').doc(uid).set({ role: 'cashier', phone: ctx.phone });
+      await db.collection('users').doc(uid).set({ storeId: storeCode });
+      currentUser = cred.user;
+      currentStoreId = storeCode;
+      proceedAfterStoreResolved(storeCode);
     }
+
+    confirmationResult = null;
+    pendingAuthContext = null;
+  } catch (err) {
+    showAuthError(mapAuthError(err.code));
   } finally {
     suppressAuthListener = false;
     setAuthLoading(false);
@@ -269,6 +327,10 @@ auth.onAuthStateChanged(async user => {
     accessState = 'trial';
     document.getElementById('trial-banner').classList.add('hidden');
     hidePendingApprovalScreen();
+    document.getElementById('otp-form').classList.add('hidden');
+    switchAuthTab('login');
+    confirmationResult = null;
+    pendingAuthContext = null;
     authScreen.classList.remove('hidden');
     appShell.classList.add('hidden');
   }
@@ -328,6 +390,11 @@ function enterApp() {
   document.getElementById('login-form').reset();
   document.getElementById('new-store-form').reset();
   document.getElementById('join-store-form').reset();
+  document.getElementById('otp-form').reset();
+  document.getElementById('otp-form').classList.add('hidden');
+  switchAuthTab('login');
+  confirmationResult = null;
+  pendingAuthContext = null;
 
   document.getElementById('store-code-text').textContent = currentStoreId;
 
