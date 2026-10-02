@@ -153,6 +153,7 @@ function paintSearch(query) {
 }
 
 function render() {
+  document.getElementById('toast')?.remove();
   const cashier = me();
   if (!state.shop) { app.innerHTML = view.setupView(); return; }
   if (!state.access?.ok) { app.innerHTML = view.activateView(state.access?.message || 'أدخل رمز التفعيل'); return; }
@@ -243,6 +244,9 @@ async function boot() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
+document.body.addEventListener('focusin', (event) => {
+  if (event.target.matches('input.num')) event.target.select();
+});
 document.body.addEventListener('click', (event) => {
   const button = event.target.closest('[data-action]');
   if (!button) return;

@@ -114,16 +114,16 @@ th { color: var(--muted); font-size: 13px; font-weight: 600; }
 .tabbar {
   position: fixed; inset-inline: 0; bottom: 0; display: flex; gap: 4px;
   background: #fff; border-top: 1px solid var(--line); padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
-  z-index: 5;
+  z-index: 5; overflow-x: auto;
 }
-.tabbar button { flex: 1; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; }
+.tabbar button { flex: 1 0 auto; min-width: 64px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; }
 .tabbar button.active { color: var(--green); background: var(--green-soft); }
 
 .modal { position: fixed; inset: 0; background: rgba(23,32,51,.45); display: grid; place-items: end center; z-index: 20; padding: 12px; }
 .modal-card { width: min(520px, 100%); padding: 16px; max-height: min(92vh, 760px); overflow: auto; }
 .toast {
   position: fixed; inset-inline: 16px; bottom: 84px; background: var(--ink); color: #fff;
-  border-radius: 12px; padding: 12px 14px; z-index: 30;
+  border-radius: 12px; padding: 12px 14px; z-index: 30; pointer-events: none;
 }
 .empty { color: var(--muted); padding: 18px 0; }
 .check { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
