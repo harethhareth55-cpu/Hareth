@@ -1,0 +1,9 @@
+{
+  "name": "cashier-pos",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "license": "node scripts/issue-license.mjs"
+  }
+}

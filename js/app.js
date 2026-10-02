@@ -1,1006 +1,963 @@
-'use strict';
+import * as db from './db.js';
+import { balanceOf, overdueAmount, portfolio, statementRows, assertCredit } from './debt.js';
+import { formatDateTime, formatIQD } from './format.js';
+import { accessState, verifyLicense } from './license.js';
+import { parseQty, priceLines, refundLine, settlePayment, toIQD } from './money.js';
+import { summarizePeriod } from './report.js';
+import { closeShift } from './shift.js';
+import { isLowStock, isWeighed, receiveStock, releaseStock, restoreStock } from './stock.js';
+import {
+  addBaghdadDays, baghdadDateKey, checkPin, downloadBlob, escapeHtml, hashPin, permissionsFor, uid, whatsAppPhone,
+} from './util.js';
+import * as view from './view.js';
 
-/* ---------- إعدادات الاشتراك (عدّل الأسعار وأرقام الحسابات هنا) ---------- */
-/* عدد أيام التجربة المجانية معرّف بملف js/admin.js (TRIAL_DAYS) لأن العد يبدأ لحظة موافقة الإدارة */
-
-const PLANS = {
-  monthly: { label: 'شهري', price: 80, currency: '$', days: 30 },
-  yearly: { label: 'سنوي', price: 500, currency: '$', days: 365 },
+const state = {
+  shop: null,
+  cashiers: [],
+  categories: [],
+  products: [],
+  customers: [],
+  entries: [],
+  sales: [],
+  returns: [],
+  purchases: [],
+  shifts: [],
+  sessionId: sessionStorage.getItem('cashier-session') || '',
+  loginId: '',
+  view: 'sale',
+  editingId: '',
+  customerEdit: false,
+  returnSaleId: '',
+  cart: [],
+  invoiceDiscount: 0,
+  customerId: '',
+  heldId: null,
+  purchaseLines: [],
+  modal: null,
+  access: null,
+  reportFrom: baghdadDateKey(),
+  reportTo: baghdadDateKey(),
+  tenderDirty: false,
+  busy: false,
+  scanner: null,
 };
 
-const PAYMENT_INFO = {
-  zaincash: '07709322035',
-  rafidain: '917302257758 (ماستر كارد)',
-  fib: '07709322035',
-};
+const app = document.getElementById('app');
 
-/* ---------- حالة التطبيق ---------- */
-
-let currentUser = null;
-let currentStoreId = null;
-
-let products = []; // {id, barcode, name, price}
-let sales = []; // {id, date, items, total}
-let settings = { storeName: '', currency: 'د.ع' };
-let subscription = { status: 'trial', plan: null, trialEndsAt: null, expiresAt: null };
-let accessState = 'trial'; // trial | active | locked
-let cart = []; // {barcode, name, price, qty}  -- محلي فقط، ما يُخزَّن بالسحابة
-
-let unsubProducts = null;
-let unsubSales = null;
-let unsubStore = null;
-let unsubPendingApproval = null;
-
-/* ---------- أدوات مساعدة ---------- */
-
-function findProductByBarcode(barcode) {
-  return products.find(p => p.barcode === barcode);
+function me() {
+  return state.cashiers.find((cashier) => cashier.id === state.sessionId) || null;
 }
-
-function formatMoney(n) {
-  return Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
+function perms() {
+  return permissionsFor(me());
 }
-
-function cartTotal() {
-  return cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+function openShift() {
+  return state.shifts.find((shift) => !shift.closedAt) || null;
 }
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+function toast(message) {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.remove(), 3400);
 }
-
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function saveDraft() {
+  localStorage.setItem('cashier-draft', JSON.stringify({
+    cart: state.cart,
+    invoiceDiscount: state.invoiceDiscount,
+    customerId: state.customerId,
+    heldId: state.heldId,
+  }));
 }
-
-function mapAuthError(code) {
-  const map = {
-    'auth/email-already-in-use': 'هذا البريد مستخدم مسبقًا',
-    'auth/invalid-email': 'صيغة البريد غير صحيحة',
-    'auth/weak-password': 'كلمة المرور ضعيفة (٦ أحرف على الأقل)',
-    'auth/user-not-found': 'الحساب غير موجود',
-    'auth/wrong-password': 'كلمة المرور غير صحيحة',
-    'auth/invalid-credential': 'بيانات الدخول غير صحيحة',
-    'auth/network-request-failed': 'تحقق من اتصال الإنترنت',
-    'auth/too-many-requests': 'محاولات كثيرة، حاول لاحقًا',
-    'auth/invalid-phone-number': 'رقم الهاتف غير صحيح، تأكد من كتابته صح',
-    'auth/invalid-verification-code': 'رمز التحقق غير صحيح',
-    'auth/code-expired': 'انتهت صلاحية الرمز، اطلب رمز جديد',
-    'auth/quota-exceeded': 'تجاوزنا الحد المسموح من رسائل التحقق حاليًا، حاول لاحقًا',
-    'auth/missing-phone-number': 'اكتب رقم الهاتف',
+function loadDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem('cashier-draft') || 'null');
+    if (!draft) return;
+    state.cart = draft.cart || [];
+    state.invoiceDiscount = draft.invoiceDiscount || 0;
+    state.customerId = draft.customerId || '';
+    state.heldId = draft.heldId || null;
+  } catch { /* ignore broken draft */ }
+}
+function customerEntries(id) {
+  return state.entries.filter((entry) => entry.customerId === id);
+}
+function endOfDay(key) {
+  return new Date(`${key}T23:59:59+03:00`).toISOString();
+}
+function bounds(from, to) {
+  return { from: new Date(`${from}T00:00:00+03:00`).toISOString(), to: endOfDay(to) };
+}
+function todayStats() {
+  const key = baghdadDateKey();
+  return summarizePeriod({ ...state, ...bounds(key, key) });
+}
+function shiftSlice(shift) {
+  if (!shift) return { sales: [], returns: [], debtPayments: [], purchases: [] };
+  return {
+    sales: state.sales.filter((sale) => sale.shiftId === shift.id),
+    returns: state.returns.filter((row) => row.shiftId === shift.id),
+    debtPayments: state.entries.filter((entry) => entry.shiftId === shift.id && entry.type === 'payment'),
+    purchases: state.purchases.filter((row) => row.shiftId === shift.id),
   };
-  return map[code] || 'حدث خطأ، حاول مرة ثانية';
 }
-
-function normalizePhone(rawPhone) {
-  let digits = rawPhone.trim().replace(/[^\d]/g, '');
-  if (!digits) return null;
-  if (digits.startsWith('964')) digits = digits.slice(3);
-  if (digits.startsWith('0')) digits = digits.slice(1);
-  if (digits.length < 9) return null;
-  return '+964' + digits;
+function searchProducts(query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return [];
+  return state.products.filter((product) => product.active !== false && (
+    String(product.barcode || '') === query.trim()
+    || String(product.barcode || '').includes(query.trim())
+    || product.name.toLowerCase().includes(q)
+  )).slice(0, 8);
 }
-
-/* ---------- شاشة تسجيل الدخول ---------- */
-
-const authScreen = document.getElementById('view-auth');
-const appShell = document.getElementById('app-shell');
-const pendingApprovalScreen = document.getElementById('view-pending-approval');
-const authError = document.getElementById('auth-error');
-const authSuccess = document.getElementById('auth-success');
-const authLoading = document.getElementById('auth-loading');
-
-function showAuthError(msg) {
-  authSuccess.classList.add('hidden');
-  authError.textContent = msg;
-  authError.classList.remove('hidden');
-}
-
-function showAuthSuccess(msg) {
-  authError.classList.add('hidden');
-  authSuccess.textContent = msg;
-  authSuccess.classList.remove('hidden');
-}
-
-function clearAuthError() {
-  authError.classList.add('hidden');
-  authSuccess.classList.add('hidden');
-}
-
-function setAuthLoading(isLoading) {
-  authLoading.classList.toggle('hidden', !isLoading);
-}
-
-function switchAuthTab(tabName) {
-  document.querySelectorAll('.auth-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
-  document.querySelectorAll('.auth-form-tab').forEach(f => f.classList.add('hidden'));
-  document.getElementById(tabName + '-form').classList.remove('hidden');
-}
-
-document.querySelectorAll('.auth-tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    switchAuthTab(btn.dataset.tab);
-    clearAuthError();
-  });
-});
-
-// نمنع مستمع onAuthStateChanged من محاولة الدخول أثناء إنشاء مستندات المحل/العضوية
-// لأن Firebase يُطلق حدث تسجيل الدخول فور نجاح التحقق من الرمز، قبل ما نخلص كتابة بيانات المحل
-let suppressAuthListener = false;
-
-/* ---------- تسجيل الدخول برقم الهاتف + رمز تحقق SMS ---------- */
-
-let confirmationResult = null;
-let pendingAuthContext = null; // { type: 'login'|'new-store'|'join-store', phone, storeName?, storeCode? }
-
-function getRecaptchaVerifier() {
-  if (!window.recaptchaVerifier) {
-    window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { size: 'invisible' });
+function readCart() {
+  for (const line of state.cart) {
+    const qty = document.querySelector(`[data-qty="${CSS.escape(line.productId)}"]`);
+    const discount = document.querySelector(`[data-discount="${CSS.escape(line.productId)}"]`);
+    if (qty && String(qty.value).trim()) line.qty = qty.value;
+    if (discount) line.discount = toIQD(discount.value || 0);
   }
-  return window.recaptchaVerifier;
+  const invoice = document.getElementById('invoice-discount');
+  if (invoice) state.invoiceDiscount = toIQD(invoice.value || 0);
+  const customer = document.getElementById('cart-customer');
+  if (customer) state.customerId = customer.value;
 }
-
-async function resetRecaptcha() {
-  if (window.recaptchaVerifier) {
-    try { await window.recaptchaVerifier.clear(); } catch (e) { /* تجاهل */ }
-    window.recaptchaVerifier = null;
+function paintDue() {
+  const el = document.getElementById('due-total');
+  if (!el) return;
+  try {
+    if (!state.cart.length) { el.textContent = formatIQD(0); return; }
+    readCart();
+    el.textContent = formatIQD(priceLines(state.cart, state.invoiceDiscount).total);
+  } catch (error) {
+    el.textContent = error.message;
   }
 }
-
-async function sendOtp(rawPhone, context) {
-  const phone = normalizePhone(rawPhone);
-  if (!phone) {
-    showAuthError('رقم الهاتف غير صحيح، اكتبه بدون الصفر الأول (مثال: ٧٧٠١٢٣٤٥٦٧)');
+function paintSearch(query) {
+  const box = document.getElementById('search-results');
+  if (!box) return;
+  const q = String(query || '').trim();
+  if (!q) { box.innerHTML = ''; return; }
+  const items = searchProducts(q);
+  if (!items.length) {
+    box.innerHTML = perms().products && /^\d{4,}$/.test(q)
+      ? `<button type="button" data-action="quick-add" data-code="${escapeHtml(q)}">إضافة مادة جديدة بهذا الباركود</button>`
+      : '<p class="muted">لا توجد نتيجة</p>';
     return;
   }
-  clearAuthError();
-  setAuthLoading(true);
-  try {
-    const verifier = getRecaptchaVerifier();
-    confirmationResult = await auth.signInWithPhoneNumber(phone, verifier);
-    pendingAuthContext = { ...context, phone };
-    document.querySelectorAll('.auth-form-tab').forEach(f => f.classList.add('hidden'));
-    document.getElementById('otp-form').classList.remove('hidden');
-    document.getElementById('otp-sent-to').textContent = `تم إرسال رمز التحقق إلى ${phone}`;
-    document.getElementById('otp-code').value = '';
-    document.getElementById('otp-code').focus();
-  } catch (err) {
-    showAuthError(mapAuthError(err.code));
-    await resetRecaptcha();
-  } finally {
-    setAuthLoading(false);
-  }
+  box.innerHTML = items.map((product) => `<button type="button" data-action="stage" data-id="${product.id}"><span>${escapeHtml(product.name)}</span><span>${formatIQD(product.price)}</span></button>`).join('');
 }
 
-document.getElementById('login-form').addEventListener('submit', e => {
-  e.preventDefault();
-  const phone = document.getElementById('login-phone').value;
-  sendOtp(phone, { type: 'login' });
-});
-
-document.getElementById('new-store-form').addEventListener('submit', e => {
-  e.preventDefault();
-  const storeName = document.getElementById('ns-store-name').value.trim();
-  const phone = document.getElementById('ns-phone').value;
-  sendOtp(phone, { type: 'new-store', storeName });
-});
-
-document.getElementById('join-store-form').addEventListener('submit', e => {
-  e.preventDefault();
-  const storeCode = document.getElementById('js-store-code').value.trim();
-  const phone = document.getElementById('js-phone').value;
-  sendOtp(phone, { type: 'join-store', storeCode });
-});
-
-document.getElementById('btn-otp-back').addEventListener('click', async () => {
-  clearAuthError();
-  document.getElementById('otp-form').classList.add('hidden');
-  const activeTab = document.querySelector('.auth-tab-btn.active').dataset.tab;
-  switchAuthTab(activeTab);
-  confirmationResult = null;
-  pendingAuthContext = null;
-  await resetRecaptcha();
-});
-
-document.getElementById('otp-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  clearAuthError();
-  if (!confirmationResult || !pendingAuthContext) {
-    showAuthError('انتهت الجلسة، اطلب رمز جديد');
-    return;
-  }
-  const code = document.getElementById('otp-code').value.trim();
-  setAuthLoading(true);
-  suppressAuthListener = true;
-  try {
-    const cred = await confirmationResult.confirm(code);
-    const uid = cred.user.uid;
-    const userDoc = await db.collection('users').doc(uid).get();
-    const hasStore = userDoc.exists;
-    const ctx = pendingAuthContext;
-
-    if (ctx.type === 'login') {
-      if (!hasStore) {
-        showAuthError('هذا الرقم غير مسجّل بأي محل. روح لتبويب "محل جديد" للتسجيل.');
-        await auth.signOut();
-        return;
-      }
-      currentUser = cred.user;
-      currentStoreId = userDoc.data().storeId;
-      proceedAfterStoreResolved(currentStoreId);
-
-    } else if (ctx.type === 'new-store') {
-      if (hasStore) {
-        // الرقم عنده محل مسجّل مسبقًا (نفس الشخص جرب "محل جديد" بالخطأ) — وديه لمحله مباشرة
-        currentUser = cred.user;
-        currentStoreId = userDoc.data().storeId;
-        proceedAfterStoreResolved(currentStoreId);
-        return;
-      }
-      const storeRef = await db.collection('stores').add({
-        name: ctx.storeName,
-        currency: 'د.ع',
-        ownerUid: uid,
-        phone: ctx.phone,
-        createdAt: new Date().toISOString(),
-        approvalStatus: 'pending',
-        subscription: { status: 'trial', plan: null, trialEndsAt: null, expiresAt: null },
-      });
-      await storeRef.collection('members').doc(uid).set({ role: 'owner', phone: ctx.phone });
-      await db.collection('users').doc(uid).set({ storeId: storeRef.id });
-      currentUser = cred.user;
-      currentStoreId = storeRef.id;
-      proceedAfterStoreResolved(storeRef.id);
-
-    } else if (ctx.type === 'join-store') {
-      if (hasStore) {
-        showAuthError('هذا الرقم عنده محل مسجّل مسبقًا، ما يقدر ينضم لمحل ثاني بنفس الرقم');
-        await auth.signOut();
-        return;
-      }
-      const storeCode = ctx.storeCode;
-      const storeDoc = await db.collection('stores').doc(storeCode).get();
-      if (!storeDoc.exists) {
-        showAuthError('كود المحل غير صحيح');
-        await auth.signOut();
-        return;
-      }
-      const approval = storeDoc.data().approvalStatus || 'approved';
-      if (approval !== 'approved') {
-        showAuthError('هذا المحل لسا قيد المراجعة من الإدارة، ما تكدر تنضم إله الحين');
-        await auth.signOut();
-        return;
-      }
-      await db.collection('stores').doc(storeCode).collection('members').doc(uid).set({ role: 'cashier', phone: ctx.phone });
-      await db.collection('users').doc(uid).set({ storeId: storeCode });
-      currentUser = cred.user;
-      currentStoreId = storeCode;
-      proceedAfterStoreResolved(storeCode);
-    }
-
-    confirmationResult = null;
-    pendingAuthContext = null;
-  } catch (err) {
-    showAuthError(mapAuthError(err.code));
-  } finally {
-    suppressAuthListener = false;
-    setAuthLoading(false);
-  }
-});
-
-document.getElementById('btn-logout').addEventListener('click', async () => {
-  if (confirm('تسجيل الخروج؟')) {
-    await auth.signOut();
-  }
-});
-
-/* ---------- مراقبة حالة تسجيل الدخول ---------- */
-
-auth.onAuthStateChanged(async user => {
-  if (suppressAuthListener) return;
-  setAuthLoading(false);
-  if (user) {
-    currentUser = user;
-    try {
-      const userDoc = await db.collection('users').doc(user.uid).get();
-      if (!userDoc.exists) {
-        showAuthError('لا يوجد محل مرتبط بهذا الحساب');
-        await auth.signOut();
-        return;
-      }
-      currentStoreId = userDoc.data().storeId;
-      proceedAfterStoreResolved(currentStoreId);
-    } catch (err) {
-      showAuthError(mapAuthError(err.code));
-    }
-  } else {
-    currentUser = null;
-    currentStoreId = null;
-    detachListeners();
-    products = [];
-    sales = [];
-    cart = [];
-    subscription = { status: 'trial', plan: null, trialEndsAt: null, expiresAt: null };
-    accessState = 'trial';
-    document.getElementById('trial-banner').classList.add('hidden');
-    hidePendingApprovalScreen();
-    document.getElementById('otp-form').classList.add('hidden');
-    switchAuthTab('login');
-    confirmationResult = null;
-    pendingAuthContext = null;
-    authScreen.classList.remove('hidden');
-    appShell.classList.add('hidden');
-  }
-});
-
-function detachListeners() {
-  if (unsubProducts) unsubProducts();
-  if (unsubSales) unsubSales();
-  if (unsubStore) unsubStore();
-  if (unsubPendingApproval) unsubPendingApproval();
-  unsubProducts = unsubSales = unsubStore = unsubPendingApproval = null;
-}
-
-/* ---------- مراجعة تسجيل المحل قبل الدخول (يستمع مباشرة، فيدخل تلقائيًا فور الموافقة) ---------- */
-
-function proceedAfterStoreResolved(storeId) {
-  if (unsubPendingApproval) unsubPendingApproval();
-
-  unsubPendingApproval = db.collection('stores').doc(storeId).onSnapshot(doc => {
-    const approvalStatus = doc.exists ? (doc.data().approvalStatus || 'approved') : 'approved';
-
-    if (approvalStatus === 'pending') {
-      showPendingApprovalScreen('pending');
-    } else if (approvalStatus === 'rejected') {
-      showPendingApprovalScreen('rejected');
-    } else {
-      if (unsubPendingApproval) { unsubPendingApproval(); unsubPendingApproval = null; }
-      hidePendingApprovalScreen();
-      enterApp();
-    }
-  }, err => alert('خطأ بالتحقق من حالة المحل: ' + err.message));
-}
-
-function showPendingApprovalScreen(status) {
-  authScreen.classList.add('hidden');
-  appShell.classList.add('hidden');
-  pendingApprovalScreen.classList.remove('hidden');
-
-  const content = document.getElementById('pending-approval-content');
-  if (status === 'pending') {
-    content.innerHTML = '<p>⏳ طلب تسجيل محلك قيد المراجعة من الإدارة حاليًا. بترجع تقدر تسجّل دخول عادي أول ما توافَق عليه.</p>';
-  } else {
-    content.innerHTML = '<p>⛔ تم رفض طلب تسجيل هذا المحل.</p>';
-  }
-}
-
-function hidePendingApprovalScreen() {
-  pendingApprovalScreen.classList.add('hidden');
-}
-
-document.getElementById('btn-pending-logout').addEventListener('click', () => auth.signOut());
-
-function enterApp() {
-  authScreen.classList.add('hidden');
-  appShell.classList.remove('hidden');
-  clearAuthError();
-  document.getElementById('login-form').reset();
-  document.getElementById('new-store-form').reset();
-  document.getElementById('join-store-form').reset();
-  document.getElementById('otp-form').reset();
-  document.getElementById('otp-form').classList.add('hidden');
-  switchAuthTab('login');
-  confirmationResult = null;
-  pendingAuthContext = null;
-
-  document.getElementById('store-code-text').textContent = currentStoreId;
-
-  document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
-  document.getElementById('view-sale').classList.remove('hidden');
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector('.nav-btn[data-view="view-sale"]').classList.add('active');
-
-  unsubStore = db.collection('stores').doc(currentStoreId).onSnapshot(doc => {
-    const data = doc.data();
-    if (!data) return;
-    settings.storeName = data.name || '';
-    settings.currency = data.currency || 'د.ع';
-    document.getElementById('st-store-name').value = settings.storeName;
-    document.getElementById('st-currency').value = settings.currency;
-    document.getElementById('currency-label-1').textContent = settings.currency;
-    subscription = data.subscription || { status: 'trial', plan: null, trialEndsAt: null, expiresAt: null };
-    accessState = computeAccessState(subscription);
-    applyAccessGate();
-    renderCart();
-  });
-
-  unsubProducts = db.collection('stores').doc(currentStoreId).collection('products')
-    .onSnapshot(snap => {
-      products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      renderProducts(document.getElementById('product-search').value);
-    }, err => alert('خطأ بتحميل المنتجات: ' + err.message));
-
-  unsubSales = db.collection('stores').doc(currentStoreId).collection('sales')
-    .onSnapshot(snap => {
-      sales = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      sales.sort((a, b) => new Date(a.date) - new Date(b.date));
-      renderSales();
-    }, err => alert('خطأ بتحميل الفواتير: ' + err.message));
-
-  renderCart();
-  barcodeInput.focus();
-}
-
-/* ---------- التنقل بين الشاشات ---------- */
-
-const views = document.querySelectorAll('.view');
-const navButtons = document.querySelectorAll('.nav-btn');
-
-navButtons.forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (accessState === 'locked' && btn.dataset.view !== 'view-subscription') return;
-    navButtons.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    views.forEach(v => v.classList.add('hidden'));
-    document.getElementById(btn.dataset.view).classList.remove('hidden');
-    if (btn.dataset.view === 'view-products') renderProducts();
-    if (btn.dataset.view === 'view-reports') renderSales();
-    if (btn.dataset.view === 'view-subscription') renderSubscriptionScreen();
-    if (btn.dataset.view === 'view-sale') document.getElementById('barcode-input').focus();
-  });
-});
-
-/* ---------- الاشتراك: حساب الحالة وتطبيق القفل ---------- */
-
-function computeAccessState(sub) {
-  const now = new Date();
-  if (sub.status === 'active' && sub.expiresAt && new Date(sub.expiresAt) > now) return 'active';
-  if (sub.status === 'trial' && sub.trialEndsAt && new Date(sub.trialEndsAt) > now) return 'trial';
-  return 'locked';
-}
-
-function applyAccessGate() {
-  const locked = accessState === 'locked';
-
-  if (locked) {
-    views.forEach(v => v.classList.add('hidden'));
-    document.getElementById('view-subscription').classList.remove('hidden');
-    navButtons.forEach(b => b.classList.remove('active'));
-    document.querySelector('.nav-btn[data-view="view-subscription"]').classList.add('active');
-  }
-
-  renderTrialBanner();
-  renderSubscriptionScreen();
-}
-
-function renderTrialBanner() {
-  const banner = document.getElementById('trial-banner');
-  if (accessState === 'trial') {
-    const daysLeft = Math.max(0, Math.ceil((new Date(subscription.trialEndsAt) - new Date()) / 86400000));
-    banner.textContent = `🎁 تجربة مجانية — باقي ${daysLeft} يوم`;
-    banner.classList.remove('hidden');
-  } else {
-    banner.classList.add('hidden');
-  }
-}
-
-function renderSubscriptionScreen() {
-  document.getElementById('plan-price-monthly').textContent = PLANS.monthly.currency + formatMoney(PLANS.monthly.price);
-  document.getElementById('plan-price-yearly').textContent = PLANS.yearly.currency + formatMoney(PLANS.yearly.price);
-  document.getElementById('pm-zaincash').textContent = PAYMENT_INFO.zaincash;
-  document.getElementById('pm-rafidain').textContent = PAYMENT_INFO.rafidain;
-  document.getElementById('pm-fib').textContent = PAYMENT_INFO.fib;
-
-  const card = document.getElementById('sub-status-card');
-  card.classList.remove('status-trial', 'status-active', 'status-expired');
-
-  if (accessState === 'trial') {
-    const daysLeft = Math.max(0, Math.ceil((new Date(subscription.trialEndsAt) - new Date()) / 86400000));
-    card.classList.add('status-trial');
-    card.innerHTML = `<span class="status-title">🎁 فترة تجربة مجانية</span>باقي ${daysLeft} يوم — اختر خطة وادفع بأي وقت قبل انتهائها.`;
-  } else if (accessState === 'active') {
-    card.classList.add('status-active');
-    const until = new Date(subscription.expiresAt).toLocaleDateString('ar-EG');
-    card.innerHTML = `<span class="status-title">✅ الاشتراك مفعّل</span>الخطة: ${PLANS[subscription.plan]?.label || '—'} — ينتهي بتاريخ ${until}`;
-  } else {
-    card.classList.add('status-expired');
-    card.innerHTML = `<span class="status-title">⛔ انتهت الفترة</span>فعّل اشتراكك بالأسفل عشان تكمل استخدام التطبيق.`;
-  }
-}
-
-document.getElementById('subscription-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const plan = document.querySelector('input[name="sub-plan"]:checked').value;
-  const method = document.getElementById('sub-method').value;
-  const reference = document.getElementById('sub-reference').value.trim();
-  const note = document.getElementById('sub-note').value.trim();
-  const msgEl = document.getElementById('sub-form-msg');
-
-  try {
-    await db.collection('subscriptionRequests').add({
-      storeId: currentStoreId,
-      plan,
-      method,
-      reference,
-      note,
-      amount: PLANS[plan].price,
-      status: 'pending',
-      submittedAt: new Date().toISOString(),
-    });
-    msgEl.textContent = '✅ تم إرسال طلبك، بانتظار التأكيد من الإدارة خلال وقت قصير.';
-    msgEl.classList.remove('hidden');
-    e.target.reset();
-  } catch (err) {
-    alert('تعذر إرسال الطلب: ' + err.message);
-  }
-});
-
-/* ---------- وضع المسح: يدوي/ماسح USB مقابل كاميرا ---------- */
-
-const btnModeManual = document.getElementById('btn-mode-manual');
-const btnModeCamera = document.getElementById('btn-mode-camera');
-const manualPanel = document.getElementById('manual-scan-panel');
-const cameraPanel = document.getElementById('camera-scan-panel');
-const barcodeInput = document.getElementById('barcode-input');
-let html5QrCode = null;
-
-btnModeManual.addEventListener('click', () => {
-  btnModeManual.classList.add('active');
-  btnModeCamera.classList.remove('active');
-  manualPanel.classList.remove('hidden');
-  cameraPanel.classList.add('hidden');
-  stopCamera();
-  barcodeInput.focus();
-});
-
-btnModeCamera.addEventListener('click', () => {
-  btnModeCamera.classList.add('active');
-  btnModeManual.classList.remove('active');
-  cameraPanel.classList.remove('hidden');
-  manualPanel.classList.add('hidden');
-  startCamera();
-});
-
-function startCamera() {
-  html5QrCode = new Html5Qrcode('reader');
-  html5QrCode
-    .start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 250, height: 150 } },
-      decodedText => handleScannedCode(decodedText)
-    )
-    .catch(() => {
-      alert('تعذر تشغيل الكاميرا. تأكد من إعطاء إذن الكاميرا للمتصفح.');
-    });
-}
-
-function stopCamera() {
-  if (html5QrCode) {
-    html5QrCode.stop().catch(() => {});
-    html5QrCode = null;
-  }
-}
-
-document.getElementById('btn-stop-camera').addEventListener('click', () => {
-  btnModeManual.click();
-});
-
-barcodeInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    const code = barcodeInput.value.trim();
-    barcodeInput.value = '';
-    if (code) handleScannedCode(code);
-  }
-});
-
-/* ---------- معالجة كود ممسوح ---------- */
-
-let lastScanTime = 0;
-function handleScannedCode(code) {
-  const now = Date.now();
-  if (now - lastScanTime < 800) return; // تجنّب التكرار السريع من الكاميرا
-  lastScanTime = now;
-
-  const product = findProductByBarcode(code);
-  if (product) {
-    addToCart(product);
-  } else {
-    openUnknownProductModal(code);
-  }
-}
-
-/* ---------- سلة الفاتورة ---------- */
-
-const cartBody = document.getElementById('cart-body');
-const cartEmptyMsg = document.getElementById('cart-empty-msg');
-const currentTotalEl = document.getElementById('current-total');
-
-function addToCart(product, qty = 1) {
-  const existing = cart.find(i => i.barcode === product.barcode);
-  if (existing) {
-    existing.qty += qty;
-  } else {
-    cart.push({ barcode: product.barcode, name: product.name, price: Number(product.price), qty });
-  }
-  renderCart();
-}
-
-function renderCart() {
-  cartBody.innerHTML = '';
-  cartEmptyMsg.classList.toggle('hidden', cart.length > 0);
-
-  cart.forEach((item, idx) => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${escapeHtml(item.name)}</td>
-      <td>${formatMoney(item.price)}</td>
-      <td><input type="number" min="1" class="qty-input" value="${item.qty}" data-idx="${idx}"></td>
-      <td>${formatMoney(item.price * item.qty)}</td>
-      <td><button class="row-delete-btn" data-idx="${idx}">✕</button></td>
-    `;
-    cartBody.appendChild(tr);
-  });
-
-  cartBody.querySelectorAll('.qty-input').forEach(input => {
-    input.addEventListener('change', () => {
-      const idx = Number(input.dataset.idx);
-      const qty = Math.max(1, Number(input.value) || 1);
-      cart[idx].qty = qty;
-      renderCart();
-    });
-  });
-
-  cartBody.querySelectorAll('.row-delete-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      cart.splice(Number(btn.dataset.idx), 1);
-      renderCart();
-    });
-  });
-
-  const total = cartTotal();
-  currentTotalEl.textContent = formatMoney(total);
-  document.querySelectorAll('#currency-label-1').forEach(el => el.textContent = settings.currency);
-}
-
-document.getElementById('btn-clear-sale').addEventListener('click', () => {
-  if (cart.length === 0) return;
-  if (confirm('إلغاء الفاتورة الحالية؟')) {
-    cart = [];
-    renderCart();
-  }
-});
-
-document.getElementById('btn-add-manual-item').addEventListener('click', () => {
-  openUnknownProductModal('', true);
-});
-
-/* ---------- منتج غير مسجل / إضافة يدوية ---------- */
-
-const unknownModal = document.getElementById('unknown-product-modal');
-const unknownBarcodeText = document.getElementById('unknown-barcode-text');
-const unknownForm = document.getElementById('unknown-product-form');
-let unknownBarcodeValue = '';
-let manualEntryNoBarcode = false;
-
-function openUnknownProductModal(barcode, manualNoBarcode = false) {
-  manualEntryNoBarcode = manualNoBarcode;
-  unknownBarcodeValue = barcode;
-  unknownBarcodeText.textContent = manualNoBarcode ? '(بدون باركود)' : barcode;
-  document.getElementById('up-name').value = '';
-  document.getElementById('up-price').value = '';
-  unknownModal.classList.remove('hidden');
-  document.getElementById('up-name').focus();
-}
-
-document.getElementById('btn-cancel-unknown').addEventListener('click', () => {
-  unknownModal.classList.add('hidden');
-  barcodeInput.focus();
-});
-
-unknownForm.addEventListener('submit', async e => {
-  e.preventDefault();
-  const name = document.getElementById('up-name').value.trim();
-  const price = Number(document.getElementById('up-price').value);
-  const barcode = manualEntryNoBarcode ? 'MANUAL-' + Date.now() : unknownBarcodeValue;
-
-  const product = { barcode, name, price };
-  if (!manualEntryNoBarcode) {
-    try {
-      await db.collection('stores').doc(currentStoreId).collection('products').add(product);
-    } catch (err) {
-      alert('تعذر حفظ المنتج: ' + err.message);
-    }
-  }
-  addToCart(product);
-  unknownModal.classList.add('hidden');
-  barcodeInput.focus();
-});
-
-/* ---------- إنهاء البيع ---------- */
-
-const receiptModal = document.getElementById('receipt-modal');
-let lastSale = null;
-
-document.getElementById('btn-finish-sale').addEventListener('click', async () => {
-  if (cart.length === 0) {
-    alert('السلة فارغة');
-    return;
-  }
-  const saleData = {
-    date: new Date().toISOString(),
-    items: cart.map(i => ({ ...i })),
-    total: cartTotal(),
+function render() {
+  const cashier = me();
+  if (!state.shop) { app.innerHTML = view.setupView(); return; }
+  if (!state.access?.ok) { app.innerHTML = view.activateView(state.access?.message || 'أدخل رمز التفعيل'); return; }
+  if (!cashier) { app.innerHTML = view.lockView(state.cashiers, state.loginId || state.cashiers[0]?.id); return; }
+  const rights = perms();
+  if ((state.view === 'products' || state.view === 'product') && !rights.products) state.view = 'sale';
+  if (state.view === 'stock' || state.view === 'purchase') { if (!rights.stock) state.view = 'sale'; }
+  if (state.view === 'reports' && !rights.reports) state.view = 'sale';
+  if (state.view === 'settings' && !rights.settings) state.view = 'sale';
+  if ((state.view === 'debts' || state.view === 'customer') && !rights.debts) state.view = 'sale';
+  const titles = {
+    sale: 'البيع', products: 'المواد', product: 'المادة', debts: 'الديون', customer: 'حساب الزبون',
+    stock: 'المخزون', purchase: 'شراء', reports: 'التقارير', shift: 'الوردية', settings: 'الإعدادات', return: 'مرتجع',
   };
-
-  try {
-    const docRef = await db.collection('stores').doc(currentStoreId).collection('sales').add(saleData);
-    lastSale = { id: docRef.id, ...saleData };
-
-    document.getElementById('receipt-total-text').textContent = formatMoney(saleData.total) + ' ' + settings.currency;
-    receiptModal.classList.remove('hidden');
-
-    cart = [];
-    renderCart();
-  } catch (err) {
-    alert('تعذر حفظ الفاتورة (تحقق من الإنترنت): ' + err.message);
-  }
-});
-
-document.getElementById('btn-new-sale').addEventListener('click', () => {
-  receiptModal.classList.add('hidden');
-  barcodeInput.focus();
-});
-
-document.getElementById('btn-export-receipt').addEventListener('click', () => {
-  if (lastSale) exportSalesToExcel([lastSale], `فاتورة-${lastSale.id}`);
-});
-
-/* ---------- شاشة المنتجات ---------- */
-
-const productsBody = document.getElementById('products-body');
-const productsEmptyMsg = document.getElementById('products-empty-msg');
-
-function renderProducts(filter = '') {
-  const term = filter.trim().toLowerCase();
-  const list = term
-    ? products.filter(p => p.name.toLowerCase().includes(term) || p.barcode.toLowerCase().includes(term))
-    : products;
-
-  productsBody.innerHTML = '';
-  productsEmptyMsg.classList.toggle('hidden', products.length > 0);
-
-  list.forEach(p => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${escapeHtml(p.barcode)}</td>
-      <td>${escapeHtml(p.name)}</td>
-      <td>${formatMoney(p.price)}</td>
-      <td><button class="row-delete-btn" data-id="${p.id}">✕</button></td>
-    `;
-    productsBody.appendChild(tr);
-  });
-
-  productsBody.querySelectorAll('.row-delete-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (confirm('حذف هذا المنتج؟')) {
-        try {
-          await db.collection('stores').doc(currentStoreId).collection('products').doc(btn.dataset.id).delete();
-        } catch (err) {
-          alert('تعذر الحذف: ' + err.message);
-        }
-      }
+  const shift = openShift();
+  let body = '';
+  if (state.view === 'sale') {
+    body = view.saleView({
+      stats: todayStats(), perms: rights, shift, mine: shift && (shift.cashierId === cashier.id || rights.settings),
+      cart: state.cart, discount: state.invoiceDiscount, customerId: state.customerId,
+      customers: state.customers, heldCount: state.sales.filter((sale) => sale.status === 'held').length,
+      lowCount: state.products.filter(isLowStock).length,
     });
-  });
+  } else if (state.view === 'products') body = view.productsView(state.products, state.categories);
+  else if (state.view === 'product') body = view.productForm(state.products.find((p) => p.id === state.editingId), state.categories);
+  else if (state.view === 'debts') body = view.debtsView(portfolio(state.customers, state.entries).rows.sort((a, b) => b.balance - a.balance));
+  else if (state.view === 'customer') {
+    const customer = state.customers.find((c) => c.id === state.editingId);
+    const rows = customer ? statementRows(customerEntries(customer.id)) : [];
+    body = view.customerView({
+      customer, rows, editing: state.customerEdit || !customer,
+      balance: customer ? balanceOf(customerEntries(customer.id)) : 0,
+      overdue: customer ? overdueAmount(customerEntries(customer.id)) : 0,
+    });
+  } else if (state.view === 'stock') body = view.stockView(state.products, state.purchases);
+  else if (state.view === 'purchase') body = view.purchaseView(state.products, state.purchaseLines);
+  else if (state.view === 'reports') {
+    body = view.reportsView(summarizePeriod({ ...state, ...bounds(state.reportFrom, state.reportTo) }), state.reportFrom, state.reportTo);
+  } else if (state.view === 'shift') {
+    const preview = shift ? closeShift({ opening: shift.opening, counted: 0, ...shiftSlice(shift) }) : null;
+    body = view.shiftView({
+      shift, cashierName: state.cashiers.find((c) => c.id === shift?.cashierId)?.name || '',
+      preview, canClose: shift && (shift.cashierId === cashier.id || rights.settings),
+    });
+  } else if (state.view === 'settings') body = view.settingsView(state.shop, state.cashiers);
+  else if (state.view === 'return') body = view.returnView(state.sales.find((sale) => sale.id === state.returnSaleId));
+  app.innerHTML = view.shell({
+    shop: state.shop, title: titles[state.view] || 'البيع', current: state.view, perms: rights,
+    cashier, shift, trialDays: state.access?.mode === 'trial' ? state.access.daysLeft : 0, body,
+  }) + modalHtml();
+  paintDue();
+  if (state.view === 'sale' && !state.modal && matchMedia('(pointer:fine)').matches) document.getElementById('barcode')?.focus();
 }
 
-document.getElementById('product-search').addEventListener('input', e => {
-  renderProducts(e.target.value);
-});
-
-document.getElementById('product-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const barcode = document.getElementById('pf-barcode').value.trim();
-  const name = document.getElementById('pf-name').value.trim();
-  const price = Number(document.getElementById('pf-price').value);
-
-  try {
-    const existing = findProductByBarcode(barcode);
-    if (existing) {
-      await db.collection('stores').doc(currentStoreId).collection('products').doc(existing.id).set({ barcode, name, price });
-    } else {
-      await db.collection('stores').doc(currentStoreId).collection('products').add({ barcode, name, price });
-    }
-    e.target.reset();
-  } catch (err) {
-    alert('تعذر حفظ المنتج: ' + err.message);
+function modalHtml() {
+  const modal = state.modal;
+  if (!modal) return '';
+  if (modal.name === 'pay') return view.payModal({ total: modal.total, customers: state.customers, customerId: state.customerId, dueKey: modal.dueKey });
+  if (modal.name === 'weight') {
+    return view.modalWrap(`<form data-form="weight"><h3>${escapeHtml(modal.product.name)}</h3><input type="hidden" name="productId" value="${modal.product.id}"><label class="field">الكمية<input name="qty" class="num" required autofocus></label><button class="btn" type="submit">إضافة</button></form>`);
   }
-});
-
-/* ---------- استيراد / تصدير المنتجات عبر إكسل ---------- */
-
-document.getElementById('btn-import-products').addEventListener('click', () => {
-  document.getElementById('import-products-file').click();
-});
-
-document.getElementById('import-products-file').addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = async evt => {
-    const data = new Uint8Array(evt.target.result);
-    const workbook = XLSX.read(data, { type: 'array' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-
-    const productsCol = db.collection('stores').doc(currentStoreId).collection('products');
-    let imported = 0;
-
-    for (const row of rows) {
-      const barcode = String(findColumnValue(row, ['باركود', 'الباركود', 'barcode', 'code', 'الكود'])).trim();
-      const name = String(findColumnValue(row, ['اسم', 'الاسم', 'name', 'المنتج'])).trim();
-      const price = Number(findColumnValue(row, ['سعر', 'السعر', 'price']));
-
-      if (!barcode || !name || isNaN(price)) continue;
-
-      try {
-        const existing = findProductByBarcode(barcode);
-        if (existing) {
-          await productsCol.doc(existing.id).set({ barcode, name, price });
-        } else {
-          await productsCol.add({ barcode, name, price });
-        }
-        imported++;
-      } catch (err) {
-        // تجاهل صف فاشل واستمر بالباقي
-      }
-    }
-
-    alert(`تم استيراد ${imported} منتج بنجاح`);
-    e.target.value = '';
-  };
-  reader.readAsArrayBuffer(file);
-});
-
-function findColumnValue(row, possibleKeys) {
-  for (const key of Object.keys(row)) {
-    if (possibleKeys.some(k => key.trim().toLowerCase() === k.toLowerCase())) {
-      return row[key];
-    }
+  if (modal.name === 'quick') {
+    return view.modalWrap(`<form data-form="quick"><h3>مادة جديدة</h3><label class="field">الباركود<input name="barcode" class="num" value="${escapeHtml(modal.barcode)}"></label><label class="field">الاسم<input name="name" required></label><label class="field">السعر<input name="price" class="num" required></label><label class="field">الكلفة<input name="cost" class="num" value="0"></label><button class="btn" type="submit">حفظ وإضافة</button></form>`);
+  }
+  if (modal.name === 'hold') return view.modalWrap('<form data-form="hold"><h3>تعليق الفاتورة</h3><label class="field">اسم مختصر<input name="label" placeholder="زبون أو طاولة"></label><button class="btn" type="submit">تعليق</button></form>');
+  if (modal.name === 'held') {
+    const rows = state.sales.filter((sale) => sale.status === 'held');
+    return view.modalWrap(`<h3>فواتير معلقة</h3>${rows.map((sale) => `<div class="btn-row" style="margin-bottom:8px"><button class="btn" data-action="recall" data-id="${sale.id}">${escapeHtml(sale.label || 'معلقة')}</button><button class="btn-danger" data-action="drop-held" data-id="${sale.id}">حذف</button></div>`).join('') || '<p class="empty">لا توجد فواتير معلقة.</p>'}<button class="btn-line" data-action="close-modal">إغلاق</button>`);
+  }
+  if (modal.name === 'camera') return view.modalWrap('<h3>ماسح الكاميرا</h3><div id="qr-reader"></div><button class="btn-line" data-action="close-modal">إغلاق</button>');
+  if (modal.name === 'receipt') {
+    const sale = state.sales.find((row) => row.id === modal.saleId);
+    const customer = state.customers.find((row) => row.id === sale?.customerId);
+    const balance = customer ? balanceOf(customerEntries(customer.id)) : 0;
+    return view.modalWrap(`${view.receiptHtml(state.shop, sale, customer, balance)}<div class="btn-row"><button class="btn" data-action="print-receipt" data-id="${sale.id}">طباعة</button><button class="btn-line" data-action="share-receipt" data-id="${sale.id}">واتساب</button><button class="btn-line" data-action="close-modal">إغلاق</button></div>`);
   }
   return '';
 }
 
-document.getElementById('btn-export-products').addEventListener('click', () => {
-  if (products.length === 0) {
-    alert('لا توجد منتجات لتصديرها');
-    return;
-  }
-  const rows = products.map(p => ({ الباركود: p.barcode, الاسم: p.name, السعر: p.price }));
-  const sheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, sheet, 'المنتجات');
-  XLSX.writeFile(workbook, `منتجات-${todayStr()}.xlsx`);
-});
-
-/* ---------- شاشة التقارير ---------- */
-
-const salesBody = document.getElementById('sales-body');
-const salesEmptyMsg = document.getElementById('sales-empty-msg');
-
-function renderSales() {
-  salesBody.innerHTML = '';
-  salesEmptyMsg.classList.toggle('hidden', sales.length > 0);
-
-  [...sales].reverse().forEach(sale => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${sale.id}</td>
-      <td>${new Date(sale.date).toLocaleString('ar-EG')}</td>
-      <td>${sale.items.reduce((s, i) => s + i.qty, 0)}</td>
-      <td>${formatMoney(sale.total)}</td>
-    `;
-    salesBody.appendChild(tr);
-  });
+async function boot() {
+  const loaded = await db.loadState();
+  Object.assign(state, loaded);
+  state.shop = loaded.shop;
+  if (state.shop) state.access = await accessState(state.shop);
+  if (!state.loginId) state.loginId = state.cashiers[0]?.id || '';
+  loadDraft();
+  render();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-document.getElementById('btn-export-today').addEventListener('click', () => {
-  const today = new Date().toDateString();
-  const todaySales = sales.filter(s => new Date(s.date).toDateString() === today);
-  if (todaySales.length === 0) {
-    alert('لا توجد مبيعات اليوم');
-    return;
-  }
-  exportSalesToExcel(todaySales, `مبيعات-اليوم-${todayStr()}`);
+document.body.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-action]');
+  if (!button) return;
+  onAction(button.dataset.action, button).catch((error) => toast(error.message || 'تعذر إكمال العملية'));
 });
-
-document.getElementById('btn-export-all-sales').addEventListener('click', () => {
-  if (sales.length === 0) {
-    alert('لا توجد مبيعات');
-    return;
-  }
-  exportSalesToExcel(sales, `كل-المبيعات-${todayStr()}`);
+document.body.addEventListener('submit', (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement) || !form.dataset.form) return;
+  event.preventDefault();
+  onSubmit(form.dataset.form, new FormData(form), form).catch((error) => toast(error.message || 'تعذر إكمال العملية'));
 });
-
-document.getElementById('btn-clear-sales').addEventListener('click', async () => {
-  if (!confirm('حذف كل سجل الفواتير؟ لا يمكن التراجع.')) return;
-  try {
-    const batch = db.batch();
-    const col = db.collection('stores').doc(currentStoreId).collection('sales');
-    const snap = await col.get();
-    snap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
-  } catch (err) {
-    alert('تعذر الحذف: ' + err.message);
+document.body.addEventListener('input', (event) => {
+  if (event.target.id === 'barcode') paintSearch(event.target.value);
+  if (event.target.matches('[data-qty],[data-discount],#invoice-discount')) {
+    try { readCart(); paintDue(); } catch { /* keep typing */ }
   }
-});
-
-function exportSalesToExcel(salesList, filename) {
-  const summaryRows = salesList.map(s => ({
-    'رقم الفاتورة': s.id,
-    'التاريخ والوقت': new Date(s.date).toLocaleString('ar-EG'),
-    'عدد الأصناف': s.items.reduce((sum, i) => sum + i.qty, 0),
-    'المجموع': s.total,
-  }));
-
-  const detailRows = [];
-  salesList.forEach(s => {
-    s.items.forEach(i => {
-      detailRows.push({
-        'رقم الفاتورة': s.id,
-        'التاريخ': new Date(s.date).toLocaleString('ar-EG'),
-        'الباركود': i.barcode,
-        'الصنف': i.name,
-        'السعر': i.price,
-        'الكمية': i.qty,
-        'الإجمالي': i.price * i.qty,
-      });
+  if (event.target.id === 'product-filter') {
+    const q = event.target.value.trim();
+    document.querySelectorAll('[data-product-row]').forEach((row) => {
+      row.hidden = !!q && !row.dataset.name.includes(q) && !row.dataset.barcode.includes(q);
     });
-  });
-
-  const workbook = XLSX.utils.book_new();
-  if (settings.storeName) {
-    const headerSheet = XLSX.utils.aoa_to_sheet([[settings.storeName], ['تقرير المبيعات'], [new Date().toLocaleString('ar-EG')]]);
-    XLSX.utils.book_append_sheet(workbook, headerSheet, 'ملخص المحل');
   }
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'ملخص الفواتير');
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detailRows), 'تفاصيل الأصناف');
-  XLSX.writeFile(workbook, `${filename}.xlsx`);
+  if (event.target.form?.dataset.form === 'pay') {
+    try { paintPay(event.target.form, event.target.name); }
+    catch (error) { const el = document.getElementById('change-due'); if (el) el.textContent = error.message; }
+  }
+});
+document.body.addEventListener('change', (event) => {
+  if (event.target.matches('[data-qty],[data-discount],#invoice-discount,#cart-customer')) {
+    try { readCart(); saveDraft(); paintDue(); } catch (error) { toast(error.message); }
+  }
+  if (event.target.id === 'import-file') importProducts(event.target.files[0]);
+  if (event.target.id === 'restore-file') restoreBackup(event.target.files[0]);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') { if (state.modal) closeModal(); return; }
+  if (event.key === 'F2') { event.preventDefault(); document.getElementById('barcode')?.focus(); }
+  if (state.modal) return;
+  if (event.key === 'F4') { event.preventDefault(); document.querySelector('[data-action="pay"]')?.click(); }
+  if (event.key === 'F8') { event.preventDefault(); document.querySelector('[data-action="hold"]')?.click(); }
+  if (event.key === 'F9') { event.preventDefault(); document.querySelector('[data-action="held"]')?.click(); }
+  if (event.key === 'Enter' && event.target?.id === 'barcode') {
+    event.preventDefault();
+    const value = event.target.value;
+    event.target.value = '';
+    paintSearch('');
+    addByCode(value).catch((error) => toast(error.message));
+  }
+});
+
+async function onAction(action, button) {
+  if (action === 'nav') {
+    state.view = button.dataset.view;
+    state.modal = null;
+    state.customerEdit = false;
+    render();
+    return;
+  }
+  if (action === 'lock') {
+    sessionStorage.removeItem('cashier-session');
+    state.sessionId = '';
+    state.modal = null;
+    render();
+    return;
+  }
+  if (action === 'pick-cashier') { state.loginId = button.dataset.id; render(); return; }
+  if (action === 'close-modal') { await closeModal(); return; }
+  if (action === 'camera') { await openCamera(); return; }
+  if (action === 'stage') { await stageProduct(state.products.find((p) => p.id === button.dataset.id)); return; }
+  if (action === 'quick-add') { state.modal = { name: 'quick', barcode: button.dataset.code }; render(); return; }
+  if (action === 'remove-line') {
+    state.cart = state.cart.filter((line) => line.productId !== button.dataset.id);
+    saveDraft(); render(); return;
+  }
+  if (action === 'pay') { openPay(); return; }
+  if (action === 'hold') { readCart(); state.modal = { name: 'hold' }; render(); return; }
+  if (action === 'held') { state.modal = { name: 'held' }; render(); return; }
+  if (action === 'recall') { recall(button.dataset.id); return; }
+  if (action === 'drop-held') { await db.deleteRecord('sales', button.dataset.id); state.sales = state.sales.filter((s) => s.id !== button.dataset.id); state.modal = { name: 'held' }; render(); return; }
+  if (action === 'start-return') { state.view = 'return'; state.returnSaleId = ''; state.modal = null; render(); return; }
+  if (action === 'edit-product') { state.view = 'product'; state.editingId = button.dataset.id === 'new' ? '' : button.dataset.id; render(); return; }
+  if (action === 'delete-product') {
+    const product = state.products.find((p) => p.id === button.dataset.id);
+    product.active = false;
+    await db.putRecord('products', product);
+    state.view = 'products'; render(); toast('أُوقفت المادة'); return;
+  }
+  if (action === 'edit-customer') { state.view = 'customer'; state.editingId = button.dataset.id === 'new' ? '' : button.dataset.id; state.customerEdit = true; render(); return; }
+  if (action === 'open-customer') { state.view = 'customer'; state.editingId = button.dataset.id; state.customerEdit = false; render(); return; }
+  if (action === 'remove-purchase') { state.purchaseLines.splice(Number(button.dataset.index), 1); render(); return; }
+  if (action === 'print-receipt') { printSale(button.dataset.id); return; }
+  if (action === 'share-receipt') { shareSale(button.dataset.id); return; }
+  if (action === 'print-statement') { printStatement(button.dataset.id); return; }
+  if (action === 'share-statement') { shareStatement(button.dataset.id); return; }
+  if (action === 'backup') { exportBackup(); return; }
+  if (action === 'restore') { document.getElementById('restore-file').click(); return; }
+  if (action === 'export-products') { exportProducts(); return; }
+  if (action === 'import-products') { document.getElementById('import-file').click(); return; }
+  if (action === 'export-report') { exportReport(); return; }
 }
 
-/* ---------- الإعدادات ---------- */
+async function onSubmit(name, data, form) {
+  if (state.busy) return;
+  if (name === 'setup') return setup(data);
+  if (name === 'activate' || name === 'license') return activate(data.get('code'));
+  if (name === 'login') return login(data);
+  if (name === 'open-shift') return startShift(data.get('opening'));
+  if (name === 'close-shift') return finishShift(data);
+  if (name === 'pay') return finishSale(data);
+  if (name === 'weight') return stageProduct(state.products.find((p) => p.id === data.get('productId')), data.get('qty'));
+  if (name === 'quick') return quickAdd(data);
+  if (name === 'hold') return holdSale(data.get('label'));
+  if (name === 'product') return saveProduct(data);
+  if (name === 'customer') return saveCustomer(data);
+  if (name === 'payment') return takePayment(data);
+  if (name === 'purchase-line') return addPurchaseLine(data);
+  if (name === 'purchase') return savePurchase(data);
+  if (name === 'find-sale') return findSale(data.get('number'));
+  if (name === 'return-sale') return saveReturn(data);
+  if (name === 'report-range') { state.reportFrom = data.get('from'); state.reportTo = data.get('to'); render(); return; }
+  if (name === 'settings') return saveSettings(data, form);
+  if (name === 'cashier') return addCashier(data);
+}
 
-document.getElementById('settings-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const storeName = document.getElementById('st-store-name').value.trim();
-  const currency = document.getElementById('st-currency').value.trim() || 'د.ع';
-  try {
-    await db.collection('stores').doc(currentStoreId).update({ name: storeName, currency });
-    alert('تم حفظ الإعدادات');
-  } catch (err) {
-    alert('تعذر الحفظ: ' + err.message);
-  }
-});
+async function setup(data) {
+  if (data.get('pin') !== data.get('pin2')) throw new Error('الرمزان غير متطابقين');
+  const salt = uid('salt');
+  const owner = await hashPin(data.get('pin'), salt);
+  const cashier = { id: uid('cas'), name: String(data.get('owner')).trim(), role: 'owner', active: true, pinHash: owner.pinHash, salt, perms: {} };
+  const shop = {
+    name: String(data.get('shop')).trim(), phone: String(data.get('phone') || '').trim(), address: String(data.get('address') || '').trim(),
+    logo: '', footer: 'شكرًا لزيارتكم', paper: '80', creditDays: 30, nextInvoice: 1001, createdAt: new Date().toISOString(), licenseCode: '',
+  };
+  if (!shop.name || !cashier.name) throw new Error('أكمل اسم المحل واسم المالك');
+  await db.saveShop(shop);
+  await db.putRecord('cashiers', cashier);
+  state.shop = shop;
+  state.cashiers = [cashier];
+  state.access = await accessState(shop);
+  state.sessionId = cashier.id;
+  sessionStorage.setItem('cashier-session', cashier.id);
+  render();
+}
 
-document.getElementById('btn-reset-all').addEventListener('click', async () => {
-  if (!confirm('سيتم حذف كل المنتجات والفواتير نهائيًا لهذا المحل. متأكد؟')) return;
-  try {
-    const batch = db.batch();
-    const storeRef = db.collection('stores').doc(currentStoreId);
-    const [productsSnap, salesSnap] = await Promise.all([
-      storeRef.collection('products').get(),
-      storeRef.collection('sales').get(),
-    ]);
-    productsSnap.docs.forEach(d => batch.delete(d.ref));
-    salesSnap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
-    cart = [];
-    renderCart();
-    alert('تم مسح كل البيانات');
-  } catch (err) {
-    alert('تعذر الحذف: ' + err.message);
+async function activate(code) {
+  const payload = await verifyLicense(code);
+  state.shop.licenseCode = String(code).trim();
+  await db.saveShop(state.shop);
+  state.access = await accessState(state.shop);
+  toast(payload.plan === 'life' ? 'تم التفعيل مدى الحياة' : 'تم التفعيل');
+  render();
+}
+
+async function login(data) {
+  const cashier = state.cashiers.find((row) => row.id === (state.loginId || state.cashiers[0]?.id));
+  if (!cashier || cashier.active === false) throw new Error('اختر الكاشير');
+  if (!(await checkPin(data.get('pin'), cashier))) throw new Error('الرمز غير صحيح');
+  state.sessionId = cashier.id;
+  sessionStorage.setItem('cashier-session', cashier.id);
+  render();
+}
+
+async function startShift(opening) {
+  if (openShift()) throw new Error('توجد وردية مفتوحة');
+  const shift = { id: uid('shf'), cashierId: me().id, openedAt: new Date().toISOString(), closedAt: null, opening: toIQD(opening || 0) };
+  await db.putRecord('shifts', shift);
+  state.shifts.push(shift);
+  render();
+}
+
+function requireShift() {
+  const shift = openShift();
+  if (!shift) throw new Error('افتح الوردية أولاً');
+  if (shift.cashierId !== me().id && !perms().settings) throw new Error('الوردية مفتوحة لكاشير آخر');
+  return shift;
+}
+
+async function stageProduct(product, qty) {
+  if (!product || product.active === false) throw new Error('المادة غير موجودة');
+  requireShift();
+  if (qty == null && isWeighed(product.unit)) {
+    state.modal = { name: 'weight', product };
+    render();
+    return;
   }
-});
+  const amount = qty == null ? 1 : parseQty(qty);
+  const existing = state.cart.find((line) => line.productId === product.id);
+  if (existing) existing.qty = Math.round((Number(existing.qty) + Number(amount)) * 1000) / 1000;
+  else state.cart.push({
+    productId: product.id, barcode: product.barcode || '', name: product.name, unit: product.unit,
+    qty: amount, unitPrice: product.price, cost: product.cost || 0, discount: 0,
+    categoryName: state.categories.find((c) => c.id === product.categoryId)?.name || 'بدون تصنيف',
+  });
+  state.modal = null;
+  saveDraft();
+  render();
+}
+
+async function quickAdd(data) {
+  requireShift();
+  const product = {
+    id: uid('prd'), barcode: String(data.get('barcode') || '').trim(), name: String(data.get('name')).trim(),
+    categoryId: '', unit: 'piece', price: toIQD(data.get('price')), cost: toIQD(data.get('cost') || 0),
+    stock: 0, lowStock: 3, trackStock: true, active: true,
+  };
+  if (!product.name) throw new Error('اكتب اسم المادة');
+  await db.putRecord('products', product);
+  state.products.push(product);
+  await stageProduct(product, 1);
+}
+
+function openPay() {
+  readCart();
+  if (!state.cart.length) return;
+  const priced = priceLines(state.cart, state.invoiceDiscount);
+  const due = new Date(addBaghdadDays(Number(state.shop.creditDays) || 30));
+  state.tenderDirty = false;
+  state.modal = { name: 'pay', total: priced.total, dueKey: baghdadDateKey(due) };
+  render();
+}
+
+function paintPay(form, field) {
+  const total = state.modal?.total || 0;
+  const card = toIQD(form.card.value || 0);
+  const debt = toIQD(form.debt.value || 0);
+  if (field === 'tendered') state.tenderDirty = true;
+  const cashDue = Math.max(0, total - card - debt);
+  if (!state.tenderDirty && (field === 'card' || field === 'debt')) form.tendered.value = String(cashDue);
+  const tendered = toIQD(form.tendered.value || 0);
+  document.getElementById('cash-due').textContent = formatIQD(cashDue);
+  document.getElementById('change-due').textContent = card + debt > total ? 'المدفوع أكبر من الفاتورة' : formatIQD(Math.max(0, tendered - cashDue));
+}
+
+async function finishSale(data) {
+  const shift = requireShift();
+  readCart();
+  const priced = priceLines(state.cart, state.invoiceDiscount);
+  const settled = settlePayment({ total: priced.total, tendered: data.get('tendered'), card: data.get('card'), onAccount: data.get('debt') });
+  const customerId = String(data.get('customerId') || state.customerId || '');
+  const customer = state.customers.find((row) => row.id === customerId);
+  if (settled.debt > 0 && !customer) throw new Error('اختر الزبون قبل تسجيل الآجل');
+  let entry = null;
+  if (settled.debt > 0) {
+    assertCredit({ balance: balanceOf(customerEntries(customer.id)), limit: customer.creditLimit, add: settled.debt });
+    entry = {
+      id: uid('ent'), customerId: customer.id, type: 'charge', amount: settled.debt, method: 'credit',
+      at: new Date().toISOString(), dueAt: endOfDay(data.get('due')), note: 'بيع آجل',
+      shiftId: shift.id, cashierId: me().id,
+    };
+  }
+  const updated = [];
+  const warnings = [];
+  for (const line of priced.lines) {
+    const product = state.products.find((row) => row.id === line.productId);
+    if (!product || product.trackStock === false) continue;
+    const next = releaseStock(product, line.qty);
+    if (next.short) warnings.push(product.name);
+    updated.push({ ...product, stock: next.stock });
+  }
+  const number = state.shop.nextInvoice || 1001;
+  const sale = {
+    id: uid('sal'), number, status: 'completed', at: new Date().toISOString(), shiftId: shift.id,
+    cashierId: me().id, cashierName: me().name, customerId: customer?.id || '', customerName: customer?.name || '',
+    lines: priced.lines.map((line) => ({ ...line, returnedQty: 0 })),
+    subtotal: priced.subtotal, invoiceDiscount: priced.invoiceDiscount, total: priced.total,
+    cost: priced.cost, profit: priced.profit, debt: settled.debt, change: settled.change, tendered: settled.tendered,
+    payments: [
+      settled.cash ? { method: 'cash', amount: settled.cash } : null,
+      settled.card ? { method: 'card', amount: settled.card } : null,
+      settled.debt ? { method: 'debt', amount: settled.debt } : null,
+    ].filter(Boolean),
+  };
+  if (entry) entry.saleId = sale.id;
+  const shop = { ...state.shop, nextInvoice: number + 1 };
+  state.busy = true;
+  try {
+    await db.completeSale({ shop, sale, products: updated, entry, removeHeldId: state.heldId });
+  } finally { state.busy = false; }
+  state.shop = shop;
+  state.sales = state.sales.filter((row) => row.id !== state.heldId);
+  state.sales.push(sale);
+  for (const product of updated) {
+    const index = state.products.findIndex((row) => row.id === product.id);
+    state.products[index] = product;
+  }
+  if (entry) state.entries.push(entry);
+  state.cart = [];
+  state.invoiceDiscount = 0;
+  state.customerId = customer?.id || '';
+  state.heldId = null;
+  saveDraft();
+  state.modal = { name: 'receipt', saleId: sale.id };
+  render();
+  if (warnings.length) toast(`تم البيع مع نقص مخزون: ${warnings.join('، ')}`);
+}
+
+async function holdSale(label) {
+  readCart();
+  if (!state.cart.length) return;
+  const doc = {
+    id: state.heldId || uid('hld'), status: 'held', label: String(label || '').trim() || formatDateTime(new Date().toISOString()),
+    at: new Date().toISOString(), cashierId: me().id, cart: state.cart, invoiceDiscount: state.invoiceDiscount, customerId: state.customerId,
+  };
+  await db.putRecord('sales', doc);
+  const index = state.sales.findIndex((sale) => sale.id === doc.id);
+  if (index >= 0) state.sales[index] = doc; else state.sales.push(doc);
+  state.cart = [];
+  state.invoiceDiscount = 0;
+  state.heldId = null;
+  state.modal = null;
+  saveDraft();
+  render();
+  toast('عُلّقت الفاتورة');
+}
+
+function recall(id) {
+  const held = state.sales.find((sale) => sale.id === id && sale.status === 'held');
+  if (!held) return;
+  state.cart = held.cart || [];
+  state.invoiceDiscount = held.invoiceDiscount || 0;
+  state.customerId = held.customerId || '';
+  state.heldId = held.id;
+  state.modal = null;
+  saveDraft();
+  render();
+}
+
+async function finishShift(data) {
+  const shift = openShift();
+  if (!shift) throw new Error('لا توجد وردية');
+  if (shift.cashierId !== me().id && !perms().settings) throw new Error('لا يمكنك إغلاق وردية كاشير آخر');
+  const closed = closeShift({ opening: shift.opening, counted: data.get('counted'), ...shiftSlice(shift) });
+  const next = { ...shift, ...closed, closedAt: new Date().toISOString(), note: String(data.get('note') || '') };
+  await db.putRecord('shifts', next);
+  const index = state.shifts.findIndex((row) => row.id === shift.id);
+  state.shifts[index] = next;
+  printHtml(`<article class="receipt"><h3>إغلاق الوردية</h3><p>${escapeHtml(state.shop.name)}</p><p>المتوقع ${formatIQD(next.expected)}</p><p>المعدود ${formatIQD(next.counted)}</p><p>الفرق ${formatIQD(next.difference)}</p></article>`);
+  render();
+}
+
+async function saveProduct(data) {
+  let categoryId = String(data.get('categoryId') || '');
+  const newCategory = String(data.get('newCategory') || '').trim();
+  if (newCategory) {
+    const found = state.categories.find((row) => row.name === newCategory);
+    if (found) categoryId = found.id;
+    else {
+      const category = { id: uid('cat'), name: newCategory };
+      await db.putRecord('categories', category);
+      state.categories.push(category);
+      categoryId = category.id;
+    }
+  }
+  const barcode = String(data.get('barcode') || '').trim();
+  if (barcode && state.products.some((row) => row.active !== false && row.barcode === barcode && row.id !== data.get('id'))) throw new Error('الباركود مستخدم');
+  const product = {
+    id: data.get('id') || uid('prd'), barcode, name: String(data.get('name')).trim(), categoryId,
+    unit: data.get('unit') || 'piece', price: toIQD(data.get('price')), cost: toIQD(data.get('cost') || 0),
+    stock: Number(data.get('stock') || 0), lowStock: toIQD(data.get('lowStock') || 0),
+    trackStock: data.get('trackStock') === 'on', active: true,
+  };
+  if (!product.name) throw new Error('اكتب اسم المادة');
+  await db.putRecord('products', product);
+  const index = state.products.findIndex((row) => row.id === product.id);
+  if (index >= 0) state.products[index] = product; else state.products.push(product);
+  state.view = 'products';
+  render();
+}
+
+async function saveCustomer(data) {
+  const limit = String(data.get('creditLimit') || '').trim();
+  const customer = {
+    id: data.get('id') || uid('cus'), name: String(data.get('name')).trim(), phone: String(data.get('phone') || '').trim(),
+    address: String(data.get('address') || '').trim(), note: String(data.get('note') || '').trim(),
+    creditLimit: limit ? toIQD(limit) : null, createdAt: new Date().toISOString(),
+  };
+  if (!customer.name) throw new Error('اكتب اسم الزبون');
+  const previous = state.customers.find((row) => row.id === customer.id);
+  if (previous) customer.createdAt = previous.createdAt;
+  await db.putRecord('customers', customer);
+  const index = state.customers.findIndex((row) => row.id === customer.id);
+  if (index >= 0) state.customers[index] = customer; else state.customers.push(customer);
+  state.editingId = customer.id;
+  state.customerEdit = false;
+  state.view = 'customer';
+  render();
+}
+
+async function takePayment(data) {
+  const shift = requireShift();
+  const amount = toIQD(data.get('amount'));
+  if (amount <= 0) throw new Error('أدخل مبلغ التسديد');
+  const entry = {
+    id: uid('ent'), customerId: String(data.get('customerId')), type: 'payment', method: 'cash', amount,
+    at: new Date().toISOString(), note: String(data.get('note') || 'تسديد'), shiftId: shift.id, cashierId: me().id,
+  };
+  await db.recordDebtPayment(entry);
+  state.entries.push(entry);
+  render();
+  toast('سُجّلت الدفعة في الصندوق');
+}
+
+function addPurchaseLine(data) {
+  const product = state.products.find((row) => row.id === data.get('productId'));
+  if (!product) throw new Error('اختر المادة');
+  state.purchaseLines.push({ productId: product.id, name: product.name, qty: data.get('qty'), unitCost: toIQD(data.get('unitCost')) });
+  render();
+}
+
+async function savePurchase(data) {
+  if (!state.purchaseLines.length) throw new Error('أضف مواد الشراء');
+  const paidCash = data.get('paidCash') === 'on';
+  const shift = paidCash ? requireShift() : openShift();
+  const lines = state.purchaseLines.map((line) => ({ ...line, qty: Number(line.qty), unitCost: toIQD(line.unitCost) }));
+  const updated = [];
+  let total = 0;
+  for (const line of lines) {
+    const product = updated.find((row) => row.id === line.productId) || state.products.find((row) => row.id === line.productId);
+    const received = receiveStock(product, line.qty, line.unitCost);
+    total += Math.round(line.qty * line.unitCost);
+    const next = { ...product, stock: received.stock, cost: received.cost };
+    const index = updated.findIndex((row) => row.id === next.id);
+    if (index >= 0) updated[index] = next; else updated.push(next);
+  }
+  const purchase = {
+    id: uid('pur'), supplier: String(data.get('supplier')).trim(), at: new Date().toISOString(),
+    lines, total, paidCash, shiftId: shift?.id || '', cashierId: me().id,
+  };
+  if (!purchase.supplier) throw new Error('اكتب اسم المورد');
+  await db.completePurchase({ purchase, products: updated });
+  state.purchases.push(purchase);
+  for (const product of updated) state.products[state.products.findIndex((row) => row.id === product.id)] = product;
+  state.purchaseLines = [];
+  state.view = 'stock';
+  render();
+  toast('تحدّث المخزون وسعر الكلفة');
+}
+
+function findSale(number) {
+  const sale = state.sales.find((row) => row.status === 'completed' && String(row.number) === String(number).trim());
+  if (!sale) throw new Error('لا توجد فاتورة بهذا الرقم');
+  state.returnSaleId = sale.id;
+  render();
+}
+
+async function saveReturn(data) {
+  const sale = state.sales.find((row) => row.id === data.get('saleId'));
+  if (!sale) throw new Error('الفاتورة غير موجودة');
+  const method = data.get('method') === 'debt' ? 'debt' : 'cash';
+  if (method === 'cash') requireShift();
+  if (method === 'debt' && !sale.customerId) throw new Error('هذه الفاتورة بلا زبون، ردها نقدًا');
+  const picked = [];
+  sale.lines.forEach((line, index) => {
+    const raw = String(data.get(`qty-${index}`) || '').trim();
+    if (!raw || raw === '0') return;
+    picked.push({ index, ...refundLine(line, raw), line });
+  });
+  if (!picked.length) throw new Error('حدد كمية مرتجعة');
+  const total = picked.reduce((sum, line) => sum + line.total, 0);
+  const cost = picked.reduce((sum, line) => sum + line.cost, 0);
+  const updated = [];
+  const lines = sale.lines.map((line, index) => {
+    const item = picked.find((row) => row.index === index);
+    if (!item) return line;
+    const product = state.products.find((row) => row.id === line.productId);
+    if (product && product.trackStock !== false) updated.push({ ...product, stock: restoreStock(product, item.qty).stock });
+    return { ...line, returnedQty: Math.round((Number(line.returnedQty || 0) + item.qty) * 1000) / 1000 };
+  });
+  const nextSale = { ...sale, lines };
+  const returnDoc = {
+    id: uid('ret'), saleId: sale.id, number: sale.number, at: new Date().toISOString(), method, total, cost,
+    shiftId: openShift()?.id || '', cashierId: me().id,
+    lines: picked.map((item) => ({ name: item.line.name, qty: item.qty, total: item.total })),
+  };
+  const entry = method === 'debt' ? {
+    id: uid('ent'), customerId: sale.customerId, type: 'payment', method: 'return', amount: total,
+    at: returnDoc.at, note: `مرتجع فاتورة ${sale.number}`, saleId: sale.id, shiftId: returnDoc.shiftId, cashierId: me().id,
+  } : null;
+  await db.completeReturn({ sale: nextSale, returnDoc, products: updated, entry });
+  const index = state.sales.findIndex((row) => row.id === sale.id);
+  state.sales[index] = nextSale;
+  state.returns.push(returnDoc);
+  for (const product of updated) state.products[state.products.findIndex((row) => row.id === product.id)] = product;
+  if (entry) state.entries.push(entry);
+  state.returnSaleId = '';
+  state.view = 'sale';
+  render();
+  toast(`تم المرتجع ${formatIQD(total)}`);
+}
+
+async function saveSettings(data, form) {
+  const file = form.querySelector('input[type=file]').files[0];
+  let logo = state.shop.logo || '';
+  if (file) logo = await resizeLogo(file);
+  state.shop = {
+    ...state.shop,
+    name: String(data.get('name')).trim(),
+    phone: String(data.get('phone') || '').trim(),
+    address: String(data.get('address') || '').trim(),
+    footer: String(data.get('footer') || '').trim(),
+    paper: data.get('paper') === '58' ? '58' : '80',
+    creditDays: toIQD(data.get('creditDays') || 30),
+    logo,
+  };
+  await db.saveShop(state.shop);
+  toast('حُفظت الإعدادات');
+  render();
+}
+
+async function addCashier(data) {
+  const salt = uid('salt');
+  const hashed = await hashPin(data.get('pin'), salt);
+  const cashier = {
+    id: uid('cas'), name: String(data.get('name')).trim(), role: 'cashier', active: true,
+    pinHash: hashed.pinHash, salt,
+    perms: { discount: data.get('discount') === 'on', returnSale: data.get('returnSale') === 'on', debts: true },
+  };
+  if (!cashier.name) throw new Error('اكتب اسم الكاشير');
+  await db.putRecord('cashiers', cashier);
+  state.cashiers.push(cashier);
+  render();
+  toast('أُضيف الكاشير');
+}
+
+function saleText(sale) {
+  const customer = state.customers.find((row) => row.id === sale.customerId);
+  const lines = [
+    state.shop.name, `فاتورة ${sale.number}`, formatDateTime(sale.at),
+    ...(sale.lines || []).map((line) => `${line.name} × ${line.qty} = ${formatIQD(line.total)}`),
+    `الإجمالي: ${formatIQD(sale.total)}`,
+    sale.change ? `الباقي: ${formatIQD(sale.change)}` : '',
+    customer ? `الزبون: ${customer.name}` : '',
+    customer ? `رصيد الدين: ${formatIQD(balanceOf(customerEntries(customer.id)))}` : '',
+  ];
+  return lines.filter(Boolean).join('\n');
+}
+function statementText(customer) {
+  const rows = statementRows(customerEntries(customer.id));
+  const lines = [
+    `كشف حساب — ${state.shop.name}`, `الزبون: ${customer.name}`,
+    `الرصيد: ${formatIQD(balanceOf(rows))}`, `المتأخر: ${formatIQD(overdueAmount(rows))}`,
+    ...rows.slice(-15).map((row) => `${formatDateTime(row.at)} | ${view.entryLabel(row)} | ${formatIQD(row.effect)} | الرصيد ${formatIQD(row.balance)}`),
+  ];
+  return lines.join('\n');
+}
+function share(text, phone) {
+  const number = whatsAppPhone(phone);
+  const url = number ? `https://wa.me/${number}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
+  window.open(url, '_blank', 'noopener');
+}
+function printSale(id) {
+  const sale = state.sales.find((row) => row.id === id);
+  const customer = state.customers.find((row) => row.id === sale.customerId);
+  printHtml(view.receiptHtml(state.shop, sale, customer, customer ? balanceOf(customerEntries(customer.id)) : 0));
+}
+function shareSale(id) {
+  const sale = state.sales.find((row) => row.id === id);
+  const customer = state.customers.find((row) => row.id === sale.customerId);
+  share(saleText(sale), customer?.phone);
+}
+function printStatement(id) {
+  const customer = state.customers.find((row) => row.id === id);
+  const rows = statementRows(customerEntries(id));
+  printHtml(view.statementHtml(state.shop, customer, rows, balanceOf(rows), overdueAmount(rows)));
+}
+function shareStatement(id) {
+  const customer = state.customers.find((row) => row.id === id);
+  share(statementText(customer), customer.phone);
+}
+function printHtml(html) {
+  document.getElementById('print-root').innerHTML = html;
+  window.print();
+}
+
+function exportProducts() {
+  const rows = state.products.filter((p) => p.active !== false).map((p) => ({
+    الباركود: p.barcode || '', الاسم: p.name,
+    التصنيف: state.categories.find((c) => c.id === p.categoryId)?.name || '',
+    الوحدة: p.unit, 'سعر البيع': p.price, 'سعر الكلفة': p.cost || 0, الكمية: p.stock || 0, 'حد التنبيه': p.lowStock || 0,
+  }));
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(rows), 'المواد');
+  XLSX.writeFile(book, 'products.xlsx');
+}
+async function importProducts(file) {
+  if (!file) return;
+  const book = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { defval: '' });
+  let count = 0;
+  for (const row of rows) {
+    const name = cell(row, ['الاسم', 'اسم', 'name']);
+    if (!name) continue;
+    const barcode = String(cell(row, ['باركود', 'barcode']) || '').trim();
+    const categoryName = String(cell(row, ['تصنيف', 'category']) || '').trim();
+    let categoryId = '';
+    if (categoryName) {
+      let category = state.categories.find((item) => item.name === categoryName);
+      if (!category) {
+        category = { id: uid('cat'), name: categoryName };
+        await db.putRecord('categories', category);
+        state.categories.push(category);
+      }
+      categoryId = category.id;
+    }
+    const existing = barcode ? state.products.find((item) => item.barcode === barcode) : null;
+    const product = {
+      id: existing?.id || uid('prd'), barcode, name: String(name).trim(), categoryId,
+      unit: normalizeUnit(cell(row, ['وحدة', 'unit'])),
+      price: toIQD(cell(row, ['سعر البيع', 'سعر', 'price']) || 0),
+      cost: toIQD(cell(row, ['كلفة', 'تكلفة', 'cost']) || 0),
+      stock: Number(cell(row, ['كمية', 'مخزون', 'stock']) || 0),
+      lowStock: toIQD(cell(row, ['حد', 'low']) || 0),
+      trackStock: true, active: true,
+    };
+    await db.putRecord('products', product);
+    if (existing) Object.assign(existing, product); else state.products.push(product);
+    count += 1;
+  }
+  render();
+  toast(`استُوردت ${count} مادة`);
+}
+function cell(row, names) {
+  for (const key of Object.keys(row)) {
+    const folded = String(key).trim().toLowerCase();
+    if (names.some((name) => folded.includes(String(name).toLowerCase()))) return row[key];
+  }
+  return '';
+}
+function normalizeUnit(value) {
+  const text = String(value || '').trim();
+  if (text === 'kg' || text.includes('كغ') || text.includes('كغم')) return 'kg';
+  if (text === 'g' || text.includes('غرام')) return 'g';
+  if (text === 'l' || text.includes('لتر')) return 'l';
+  return 'piece';
+}
+function exportReport() {
+  const report = summarizePeriod({ ...state, ...bounds(state.reportFrom, state.reportTo) });
+  const books = portfolio(state.customers, state.entries).rows.filter((row) => row.balance > 0).map((row) => ({
+    الزبون: row.customer.name, الهاتف: row.customer.phone || '', الرصيد: row.balance, المتأخر: row.overdue,
+  }));
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet([{
+    'صافي المبيعات': report.net, الربح: report.profit, النقد: report.cash, الآجل: report.credit, 'تحصيل الديون': report.debtCollected,
+  }]), 'الملخص');
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(books), 'الديون');
+  XLSX.writeFile(book, 'report.xlsx');
+}
+function exportBackup() {
+  const payload = {
+    version: 1, exportedAt: new Date().toISOString(), shop: state.shop,
+    cashiers: state.cashiers, categories: state.categories, products: state.products, customers: state.customers,
+    entries: state.entries, sales: state.sales, returns: state.returns, purchases: state.purchases, shifts: state.shifts,
+  };
+  downloadBlob(`cashier-backup-${baghdadDateKey()}.json`, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+}
+async function restoreBackup(file) {
+  if (!file) return;
+  const payload = JSON.parse(await file.text());
+  if (payload.version !== 1 || !payload.shop?.name || !Array.isArray(payload.cashiers)) throw new Error('ملف النسخة غير صالح');
+  await db.replaceAll(payload);
+  location.reload();
+}
+
+async function openCamera() {
+  if (!window.Html5Qrcode) throw new Error('الكاميرا غير متاحة في هذا المتصفح');
+  state.modal = { name: 'camera' };
+  render();
+  const scanner = new Html5Qrcode('qr-reader');
+  state.scanner = scanner;
+  await scanner.start({ facingMode: 'environment' }, { fps: 8, qrbox: { width: 220, height: 160 } }, async (text) => {
+    await closeModal();
+    await addByCode(text);
+  }, () => {});
+}
+async function closeModal() {
+  if (state.scanner) {
+    try { await state.scanner.stop(); } catch { /* already stopped */ }
+    state.scanner = null;
+  }
+  state.modal = null;
+  render();
+}
+async function addByCode(raw) {
+  const code = String(raw || '').trim();
+  if (!code) return;
+  const exact = state.products.find((product) => product.active !== false && String(product.barcode) === code);
+  if (exact) return stageProduct(exact);
+  const matches = searchProducts(code);
+  if (matches.length === 1 && matches[0].name === code) return stageProduct(matches[0]);
+  if (exact == null && matches.length === 1 && String(matches[0].barcode) === code) return stageProduct(matches[0]);
+  paintSearch(code);
+  if (!matches.length && perms().products && /^\d{4,}$/.test(code)) {
+    state.modal = { name: 'quick', barcode: code };
+    render();
+    return;
+  }
+  if (!matches.length) toast('المادة غير موجودة');
+}
+
+function resizeLogo(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const scale = Math.min(1, 320 / Math.max(image.width, image.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      const url = canvas.toDataURL('image/jpeg', 0.8);
+      if (url.length > 140000) reject(new Error('الشعار كبير. اختر صورة أصغر'));
+      else resolve(url);
+    };
+    image.onerror = () => reject(new Error('تعذر قراءة الصورة'));
+    image.src = URL.createObjectURL(file);
+  });
+}
+
+boot().catch((error) => { app.textContent = error.message || 'تعذر فتح قاعدة البيانات'; });
