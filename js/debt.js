@@ -63,6 +63,13 @@ export function overdueAmount(entries, now = new Date()) {
     .reduce((sum, charge) => sum + charge.remaining, 0);
 }
 
+export function assertDueDate(dueKey, todayKey) {
+  const due = String(dueKey || '').trim();
+  const today = String(todayKey || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) throw new Error('تاريخ الاستحقاق غير صالح');
+  if (due < today) throw new Error('تاريخ الاستحقاق لا يمكن أن يكون في الماضي');
+}
+
 export function assertCredit({ balance, limit, add }) {
   const next = toIQD(balance) + toIQD(add);
   if (toIQD(add) <= 0) return next;

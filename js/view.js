@@ -11,18 +11,18 @@ function safeLogo(logo) {
 }
 
 export function navItems(perms) {
-  const items = [{ id: 'sale', label: 'البيع' }];
-  if (perms.products) items.push({ id: 'products', label: 'المواد' });
-  if (perms.debts) items.push({ id: 'debts', label: 'الديون' });
-  if (perms.stock) items.push({ id: 'stock', label: 'المخزون' });
-  if (perms.reports) items.push({ id: 'reports', label: 'التقارير' });
-  items.push({ id: 'shift', label: 'الوردية' });
-  if (perms.settings) items.push({ id: 'settings', label: 'الإعدادات' });
+  const items = [{ id: 'sale', label: 'البيع', short: 'بيع' }];
+  if (perms.products) items.push({ id: 'products', label: 'المواد', short: 'مواد' });
+  if (perms.debts) items.push({ id: 'debts', label: 'الديون', short: 'ديون' });
+  if (perms.stock) items.push({ id: 'stock', label: 'المخزون', short: 'مخزون' });
+  if (perms.reports) items.push({ id: 'reports', label: 'التقارير', short: 'تقارير' });
+  items.push({ id: 'shift', label: 'الوردية', short: 'وردية' });
+  if (perms.settings) items.push({ id: 'settings', label: 'الإعدادات', short: 'إعداد' });
   return items;
 }
 
-function navHtml(items, current) {
-  return items.map((item) => `<button data-action="nav" data-view="${item.id}" class="${item.id === current ? 'active' : ''}">${item.label}</button>`).join('');
+function navHtml(items, current, compact = false) {
+  return items.map((item) => `<button data-action="nav" data-view="${item.id}" class="${item.id === current ? 'active' : ''}">${escapeHtml(compact ? item.short : item.label)}</button>`).join('');
 }
 
 export function shell({ shop, title, current, perms, cashier, shift, trialDays, body }) {
@@ -46,7 +46,7 @@ export function shell({ shop, title, current, perms, cashier, shift, trialDays, 
         </header>
         ${body}
       </section>
-      <nav class="tabbar">${navHtml(items, current)}</nav>
+      <nav class="tabbar">${navHtml(items, current, true)}</nav>
     </div>`;
 }
 
@@ -110,6 +110,7 @@ export function saleView({ stats, perms, shift, mine, cart, discount, customerId
       </div>
     </div>`).join('');
   return `
+    <div class="sale-screen">
     <div class="stats">
       <div class="stat"><span>مبيعات اليوم</span><strong>${money(stats.net)}</strong></div>
       <button class="stat warn" data-action="nav" data-view="debts"><span>ديون معلقة</span><strong>${money(stats.outstanding)}</strong>${stats.overdue ? `<em>متأخر ${formatIQD(stats.overdue)}</em>` : ''}</button>
@@ -125,25 +126,30 @@ export function saleView({ stats, perms, shift, mine, cart, discount, customerId
         ${lines || '<p class="empty">امسح الباركود أو ابحث عن المادة. السكانر السلكي يكتب هنا ثم يضغط Enter.</p>'}
       </div>
       <aside class="ticket">
-        <div class="muted">المطلوب</div>
-        <div class="total-due" id="due-total">0 د.ع</div>
-        ${perms.discount ? `<label class="field">خصم الفاتورة<input id="invoice-discount" class="num" inputmode="numeric" value="${discount || 0}"></label>` : ''}
-        <label class="field">الزبون
-          <select id="cart-customer">
-            <option value="">بدون زبون</option>
-            ${customers.map((c) => `<option value="${c.id}" ${c.id === customerId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-          </select>
-        </label>
-        <div class="btn-row">
-          <button class="btn" type="button" data-action="pay" ${cart.length ? '' : 'disabled'}>دفع F4</button>
-          <button class="btn-line" type="button" data-action="hold" ${cart.length ? '' : 'disabled'}>تعليق F8</button>
+        <div class="ticket-meta">
+          ${perms.discount ? `<label class="field">خصم الفاتورة<input id="invoice-discount" class="num" inputmode="numeric" value="${discount || 0}"></label>` : ''}
+          <label class="field">الزبون
+            <select id="cart-customer">
+              <option value="">بدون زبون</option>
+              ${customers.map((c) => `<option value="${c.id}" ${c.id === customerId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+            </select>
+          </label>
         </div>
-        <div class="btn-row" style="margin-top:8px">
-          <button class="btn-line" type="button" data-action="held">معلقة (${heldCount}) F9</button>
+        <div class="btn-row ticket-secondary">
+          <button class="btn-line" type="button" data-action="hold" ${cart.length ? '' : 'disabled'}>تعليق</button>
+          <button class="btn-line" type="button" data-action="held">معلقة (${heldCount})</button>
           ${perms.returnSale ? '<button class="btn-line" type="button" data-action="start-return">مرتجع</button>' : ''}
+        </div>
+        <div class="paybar">
+          <div>
+            <div class="muted">المطلوب</div>
+            <div class="total-due" id="due-total">0 د.ع</div>
+          </div>
+          <button class="btn" type="button" data-action="pay" ${cart.length ? '' : 'disabled'}>دفع</button>
         </div>
         <p class="keys">F2 البحث · F4 الدفع · F8 تعليق · F9 استرجاع المعلقة · Esc إغلاق</p>
       </aside>
+    </div>
     </div>`;
 }
 
@@ -408,11 +414,11 @@ export function modalWrap(inner) {
   return `<div class="modal"><div class="modal-card">${inner}</div></div>`;
 }
 
-export function payModal({ total, customers, customerId, dueKey }) {
+export function payModal({ total, customers, customerId, dueKey, minDue }) {
   return modalWrap(`
     <h3>الدفع</h3>
     <p class="row-between"><span>قيمة الفاتورة</span><strong>${money(total)}</strong></p>
-    <form data-form="pay">
+    <form data-form="pay" novalidate>
       <label class="field">نقد مستلم<input name="tendered" class="num" inputmode="numeric" value="${total}"></label>
       <label class="field">بطاقة<input name="card" class="num" inputmode="numeric" value="0"></label>
       <label class="field">آجل على الزبون<input name="debt" class="num" inputmode="numeric" value="0"></label>
@@ -421,7 +427,7 @@ export function payModal({ total, customers, customerId, dueKey }) {
       <label class="field">الزبون
         <select name="customerId"><option value="">بدون</option>${customers.map((c) => `<option value="${c.id}" ${c.id === customerId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>
       </label>
-      <label class="field">استحقاق الآجل<input type="date" name="due" value="${dueKey}"></label>
+      <label class="field">استحقاق الآجل<input type="date" name="due" value="${dueKey}" min="${minDue || dueKey}"></label>
       <div class="btn-row">
         <button class="btn" type="submit">إتمام الفاتورة</button>
         <button class="btn-line" type="button" data-action="close-modal">رجوع</button>
@@ -459,12 +465,15 @@ export function receiptHtml(shop, sale, customer, balance) {
 
 export function statementHtml(shop, customer, rows, balance, overdue) {
   const body = rows.map((row) => `<tr><td>${escapeHtml(formatDate(row.at))}</td><td>${escapeHtml(entryLabel(row))}</td><td>${formatIQD(row.effect)}</td><td>${formatIQD(row.balance)}</td></tr>`).join('');
-  return `<article class="receipt">
+  return `<article class="receipt statement-print">
     <div class="center"><h3>${escapeHtml(shop.name)}</h3><p>كشف حساب</p></div>
     <p>الزبون: ${escapeHtml(customer.name)}</p>
     <p>الهاتف: ${escapeHtml(customer.phone || '—')}</p>
     <p>الرصيد: ${formatIQD(balance)}</p>
     <p>المتأخر: ${formatIQD(overdue)}</p>
-    <table>${body}</table>
+    <table>
+      <thead><tr><th>التاريخ</th><th>البيان</th><th>الحركة</th><th>الرصيد</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
   </article>`;
 }

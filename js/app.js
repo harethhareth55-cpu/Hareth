@@ -1,5 +1,5 @@
 import * as db from './db.js';
-import { balanceOf, overdueAmount, portfolio, statementRows, assertCredit } from './debt.js';
+import { assertCredit, assertDueDate, balanceOf, overdueAmount, portfolio, statementRows } from './debt.js';
 import { formatDateTime, formatIQD } from './format.js';
 import { accessState, verifyLicense } from './license.js';
 import { parseQty, priceLines, refundLine, settlePayment, toIQD } from './money.js';
@@ -53,7 +53,18 @@ function perms() {
 function openShift() {
   return state.shifts.find((shift) => !shift.closedAt) || null;
 }
+let activeToast = '';
 function toast(message) {
+  activeToast = String(message || '');
+  paintToast();
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => {
+    activeToast = '';
+    document.getElementById('toast')?.remove();
+  }, 3400);
+}
+function paintToast() {
+  if (!activeToast) return;
   let el = document.getElementById('toast');
   if (!el) {
     el = document.createElement('div');
@@ -61,9 +72,7 @@ function toast(message) {
     el.className = 'toast';
     document.body.appendChild(el);
   }
-  el.textContent = message;
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => el.remove(), 3400);
+  el.textContent = activeToast;
 }
 function saveDraft() {
   localStorage.setItem('cashier-draft', JSON.stringify({
@@ -153,7 +162,6 @@ function paintSearch(query) {
 }
 
 function render() {
-  document.getElementById('toast')?.remove();
   const cashier = me();
   if (!state.shop) { app.innerHTML = view.setupView(); return; }
   if (!state.access?.ok) { app.innerHTML = view.activateView(state.access?.message || 'أدخل رمز التفعيل'); return; }
@@ -205,13 +213,14 @@ function render() {
     cashier, shift, trialDays: state.access?.mode === 'trial' ? state.access.daysLeft : 0, body,
   }) + modalHtml();
   paintDue();
+  paintToast();
   if (state.view === 'sale' && !state.modal && matchMedia('(pointer:fine)').matches) document.getElementById('barcode')?.focus();
 }
 
 function modalHtml() {
   const modal = state.modal;
   if (!modal) return '';
-  if (modal.name === 'pay') return view.payModal({ total: modal.total, customers: state.customers, customerId: state.customerId, dueKey: modal.dueKey });
+  if (modal.name === 'pay') return view.payModal({ total: modal.total, customers: state.customers, customerId: state.customerId, dueKey: modal.dueKey, minDue: baghdadDateKey() });
   if (modal.name === 'weight') {
     return view.modalWrap(`<form data-form="weight"><h3>${escapeHtml(modal.product.name)}</h3><input type="hidden" name="productId" value="${modal.product.id}"><label class="field">الكمية<input name="qty" class="num" required autofocus></label><button class="btn" type="submit">إضافة</button></form>`);
   }
@@ -490,10 +499,12 @@ async function finishSale(data) {
   if (settled.debt > 0 && !customer) throw new Error('اختر الزبون قبل تسجيل الآجل');
   let entry = null;
   if (settled.debt > 0) {
+    const dueKey = String(data.get('due') || '');
+    assertDueDate(dueKey, baghdadDateKey());
     assertCredit({ balance: balanceOf(customerEntries(customer.id)), limit: customer.creditLimit, add: settled.debt });
     entry = {
       id: uid('ent'), customerId: customer.id, type: 'charge', amount: settled.debt, method: 'credit',
-      at: new Date().toISOString(), dueAt: endOfDay(data.get('due')), note: 'بيع آجل',
+      at: new Date().toISOString(), dueAt: endOfDay(dueKey), note: 'بيع آجل',
       shiftId: shift.id, cashierId: me().id,
     };
   }

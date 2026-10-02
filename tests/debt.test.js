@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { allocateCharges, assertCredit, balanceOf, overdueAmount, portfolio, statementRows } from '../js/debt.js';
+import { allocateCharges, assertCredit, assertDueDate, balanceOf, overdueAmount, portfolio, statementRows } from '../js/debt.js';
 
 const charges = [
   { id: 'c1', customerId: 'a', type: 'charge', amount: 10000, at: '2026-09-01T00:00:00.000Z', dueAt: '2026-09-10T00:00:00.000Z' },
@@ -20,6 +20,13 @@ test('balance, statement, and FIFO overdue allocation', () => {
   assert.equal(allocated[1].remaining, 5000);
   assert.equal(allocated[1].overdue, false);
   assert.equal(overdueAmount(entries, now), 2000);
+});
+
+test('a credit sale cannot fall due before today', () => {
+  assertDueDate('2026-10-02', '2026-10-02');
+  assertDueDate('2026-10-20', '2026-10-02');
+  assert.throws(() => assertDueDate('2026-10-01', '2026-10-02'), /الماضي/);
+  assert.throws(() => assertDueDate('', '2026-10-02'), /غير صالح/);
 });
 
 test('credit limit blocks a sale that would exceed the ceiling', () => {
