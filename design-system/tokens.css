@@ -1,0 +1,132 @@
+/* Muhasib — generated from tokens.json */
+
+:root, [data-theme="light"] {
+  --bg: #eef2f5;
+  --surface: #ffffff;
+  --field: #ffffff;
+  --line: #e4e9ef;
+  --ink: #172033;
+  --muted: #5d6b7c;
+  --brand: #0c6b45;
+  --on-brand: #ffffff;
+  --brand-strong: #084e32;
+  --brand-soft: #e7f6ef;
+  --sidebar: #084e32;
+  --on-sidebar: #ffffff;
+  --on-sidebar-muted: #d5eee4;
+  --amber: #8a5a00;
+  --amber-soft: #fff6e5;
+  --danger: #b42318;
+  --danger-soft: #fdeceb;
+  --info: #1d4e89;
+  --info-soft: #e7f0ff;
+  --inverse: #172033;
+  --on-inverse: #ffffff;
+  --scrim: rgba(23, 32, 51, 0.45);
+  --focus: #1d4e89;
+  --shadow-card: 0 12px 32px rgba(23, 32, 51, 0.06);
+  --shadow-sheet: 0 -8px 24px rgba(23, 32, 51, 0.12);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e141b;
+  --surface: #17202a;
+  --field: #111922;
+  --line: #2a3644;
+  --ink: #e8edf2;
+  --muted: #9aa7b5;
+  --brand: #34b37c;
+  --on-brand: #06281a;
+  --brand-strong: #7ddcb0;
+  --brand-soft: #12342a;
+  --sidebar: #0b1a14;
+  --on-sidebar: #e6efe9;
+  --on-sidebar-muted: #9bb3a8;
+  --amber: #f0b44c;
+  --amber-soft: #3a2c10;
+  --danger: #ff8a7f;
+  --danger-soft: #3d1916;
+  --info: #8db8f0;
+  --info-soft: #142a47;
+  --inverse: #e8edf2;
+  --on-inverse: #0e141b;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --focus: #8db8f0;
+  --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --shadow-sheet: 0 -8px 24px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0e141b;
+    --surface: #17202a;
+    --field: #111922;
+    --line: #2a3644;
+    --ink: #e8edf2;
+    --muted: #9aa7b5;
+    --brand: #34b37c;
+    --on-brand: #06281a;
+    --brand-strong: #7ddcb0;
+    --brand-soft: #12342a;
+    --sidebar: #0b1a14;
+    --on-sidebar: #e6efe9;
+    --on-sidebar-muted: #9bb3a8;
+    --amber: #f0b44c;
+    --amber-soft: #3a2c10;
+    --danger: #ff8a7f;
+    --danger-soft: #3d1916;
+    --info: #8db8f0;
+    --info-soft: #142a47;
+    --inverse: #e8edf2;
+    --on-inverse: #0e141b;
+    --scrim: rgba(0, 0, 0, 0.6);
+    --focus: #8db8f0;
+    --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.35);
+    --shadow-sheet: 0 -8px 24px rgba(0, 0, 0, 0.5);
+  }
+}
+
+:root {
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-22: 22px;
+  --space-24: 24px;
+  --space-28: 28px;
+  --radius-sm: 12px;
+  --radius-md: 14px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --control-sm: 40px;
+  --control-md: 44px;
+  --control-lg: 48px;
+  --sidebar-width: 232px;
+  --ticket-width: 300px;
+  --sheet-width: 520px;
+  --gate-width: 440px;
+  --content-width: 760px;
+  --desktop-breakpoint: 980px;
+  --z-header: 5;
+  --z-tabbar: 6;
+  --z-modal: 30;
+  --z-toast: 40;
+  --font-sans: "Cairo", "Noto Kufi Arabic", "Segoe UI", Tahoma, sans-serif;
+}
+.t-total { font-family: var(--font-sans); font-size: 32px; line-height: 40px; font-weight: 800; }
+.t-total-compact { font-family: var(--font-sans); font-size: 24px; line-height: 32px; font-weight: 800; }
+.t-stat-value { font-family: var(--font-sans); font-size: 18px; line-height: 26px; font-weight: 700; }
+.t-page-title { font-family: var(--font-sans); font-size: 22px; line-height: 32px; font-weight: 700; }
+.t-brand-name { font-family: var(--font-sans); font-size: 18px; line-height: 26px; font-weight: 800; }
+.t-section { font-family: var(--font-sans); font-size: 16px; line-height: 24px; font-weight: 700; }
+.t-body { font-family: var(--font-sans); font-size: 16px; line-height: 24px; font-weight: 400; }
+.t-body-sm { font-family: var(--font-sans); font-size: 14px; line-height: 21px; font-weight: 600; }
+.t-caption { font-family: var(--font-sans); font-size: 13px; line-height: 20px; font-weight: 600; }
+.t-label { font-family: var(--font-sans); font-size: 12px; line-height: 18px; font-weight: 700; }
+.t-tab { font-family: var(--font-sans); font-size: 11px; line-height: 14px; font-weight: 700; }

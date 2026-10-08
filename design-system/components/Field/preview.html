@@ -1,0 +1,20 @@
+<!-- @dsCard group="Forms" height=280 -->
+<!doctype html>
+<html lang="ar">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&amp;display=swap">
+<style>
+  body { margin: 0; background: var(--bg); }
+  .demo { padding: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+  .demo.col { flex-direction: column; align-items: stretch; }
+</style>
+</head>
+<body>
+<div class="mh demo col" style="max-width:360px">
+  <label class="field">اسم المحل<input value="ماركت الرافدين"></label>
+  <label class="field">النقد الافتتاحي<input class="num" inputmode="numeric" value="250000"></label>
+  <label class="field invalid">تأكيد الرمز<input type="password" inputmode="numeric" class="num" value="1234"><span class="hint">الرمز وتأكيده مختلفين</span></label>
+</div>
+</body>
+</html>

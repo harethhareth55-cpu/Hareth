@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Muhasib components</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="components.css">
+<style>
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); }
+  .page { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; display: flex; flex-direction: column; gap: 24px; }
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .spec h2 { margin: 0; font-size: 16px; direction: ltr; text-align: left; }
+  .sum { margin: 4px 0 8px; color: var(--muted); font-size: 13px; text-align: left; }
+  .frame { border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg); }
+  .demo { padding: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+  .demo.col { flex-direction: column; align-items: stretch; }
+</style>
+</head>
+<body>
+<main class="page mh">
+  <div class="head"><h1 class="t-page-title" style="margin:0">Muhasib</h1><button class="btn secondary small" id="theme">الوضع الداكن</button></div>
+  <section class="spec" id="Button"><h2>Button</h2><p class="sum" dir="ltr">A tappable action in one of four tones: primary green, secondary outline, ghost text and danger.</p><div class="frame"><div class="mh demo">
+  <button class="btn">دفع</button>
+  <button class="btn secondary">تعليق</button>
+  <button class="btn ghost">نسخة احتياطية</button>
+  <button class="btn danger">حذف</button>
+  <button class="btn small secondary">كاميرا</button>
+  <button class="btn large">دفع ١٢٥٬٠٠٠</button>
+  <button class="btn" disabled>جارٍ الحفظ…</button>
+</div></div></section><section class="spec" id="Chip"><h2>Chip</h2><p class="sum" dir="ltr">A pill toggle for filtering a list by status or period.</p><div class="frame"><div class="mh demo"><div class="chips">
+  <button class="chip active">اليوم</button>
+  <button class="chip">أمس</button>
+  <button class="chip">الأسبوع</button>
+  <button class="chip">الشهر</button>
+  <button class="chip">مخصص</button>
+</div></div></div></section><section class="spec" id="Field"><h2>Field</h2><p class="sum" dir="ltr">A labelled input, select or textarea with an optional hint line.</p><div class="frame"><div class="mh demo col" style="max-width:360px">
+  <label class="field">اسم المحل<input value="ماركت الرافدين"></label>
+  <label class="field">النقد الافتتاحي<input class="num" inputmode="numeric" value="250000"></label>
+  <label class="field invalid">تأكيد الرمز<input type="password" inputmode="numeric" class="num" value="1234"><span class="hint">الرمز وتأكيده مختلفين</span></label>
+</div></div></section><section class="spec" id="Card"><h2>Card</h2><p class="sum" dir="ltr">The white panel that holds a form, a list or a block of figures.</p><div class="frame"><div class="mh demo col" style="max-width:420px">
+  <form class="card">
+    <p class="eyebrow">الوردية</p>
+    <h3>فتح وردية جديدة</h3>
+    <p class="muted" style="margin:0 0 12px">عدّ النقد الموجود في الصندوق قبل أول فاتورة.</p>
+    <button class="btn" type="button" style="width:100%">فتح الوردية</button>
+  </form>
+</div></div></section><section class="spec" id="Stat"><h2>Stat</h2><p class="sum" dir="ltr">A tile with one labelled figure, shown three across at the top of the sale and report screens.</p><div class="frame"><div class="mh demo col"><div class="stats">
+  <div class="stat"><span>مبيعات اليوم</span><strong class="num">٨٤٠٬٥٠٠ د.ع</strong></div>
+  <button class="stat warn"><span>ديون معلقة</span><strong class="num">٣١٥٬٠٠٠ د.ع</strong><em>متأخر ٩٠٬٠٠٠ د.ع</em></button>
+  <div class="stat"><span>نواقص المخزون</span><strong class="low num">٤</strong></div>
+</div></div></div></section><section class="spec" id="Badge"><h2>Badge</h2><p class="sum" dir="ltr">A small pill naming the state of an order, debt or stock line.</p><div class="frame"><div class="mh demo">
+  <span class="badge new">جديد</span>
+  <span class="badge warn">مع المندوب</span>
+  <span class="badge">سُلّمت</span>
+  <span class="badge bad">مرتجع</span>
+  <span class="badge off">ملغى</span>
+  <span class="badge bad">نقص</span>
+  <span class="badge">مطابق</span>
+</div></div></section><section class="spec" id="Banner"><h2>Banner</h2><p class="sum" dir="ltr">An amber notice across the top of a screen for account state the user must act on soon, such as the trial running out.</p><div class="frame"><div class="mh demo col" style="max-width:520px">
+  <div class="banner">باقي ٣ أيام على الفترة التجريبية. فعّل الاشتراك من الإعدادات.</div>
+  <div><span class="trial">تجريبي ٣ يوم</span></div>
+</div></div></section><section class="spec" id="ListRow"><h2>ListRow</h2><p class="sum" dir="ltr">A tappable card for one order, debt or product in a scrolling list.</p><div class="frame"><div class="mh demo col" style="max-width:440px"><div class="list">
+  <button class="row-card"><div class="row-top"><span class="row-sub num">#1042</span><span class="badge warn">مع المندوب</span></div><div class="row-title">أبو علي · حي النصر</div><div class="row-bottom"><span>المطلوب من الزبون</span><span class="num">٣٧٬٥٠٠ د.ع</span></div></button>
+  <button class="row-card"><div class="row-top"><span class="row-sub num">#1041</span><span class="badge">سُلّمت</span></div><div class="row-title">أم حسين · شارع الجمهورية</div><div class="row-bottom"><span>المطلوب من الزبون</span><span class="num">١٢٬٠٠٠ د.ع</span></div></button>
+</div></div></div></section><section class="spec" id="KeyValue"><h2>KeyValue</h2><p class="sum" dir="ltr">Label-and-value rows for an order summary or a settlement, ending in an optional highlighted total.</p><div class="frame"><div class="mh demo col" style="max-width:420px"><div class="card">
+  <div class="kv"><span>البضاعة</span><span class="num">٣٠٬٠٠٠ د.ع</span></div>
+  <div class="kv"><span>أجرة التوصيل</span><span class="num">٥٬٠٠٠ د.ع</span></div>
+  <div class="kv"><span>النقد المستلم</span><span class="num">٣٥٬٠٠٠ د.ع</span></div>
+  <div class="due" style="margin-top:8px"><span>يسلّم للمحل</span><span class="num">٣٠٬٠٠٠ د.ع</span></div>
+</div></div></div></section><section class="spec" id="Table"><h2>Table</h2><p class="sum" dir="ltr">A plain data table for reports, stock and shift history.</p><div class="frame"><div class="mh demo col"><div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>المادة</th><th>الباركود</th><th>الكمية</th><th>السعر</th></tr></thead>
+  <tbody>
+    <tr><td>رز عنبر ١ كغم</td><td class="num">6260123400017</td><td class="num">٢٤</td><td class="num">٣٬٢٥٠</td></tr>
+    <tr><td>زيت دوار الشمس</td><td class="num">6260123400208</td><td class="num low" style="color:var(--danger);font-weight:700">٢</td><td class="num">٤٬٥٠٠</td></tr>
+    <tr><td>شاي محمود ٤٥٠ غم</td><td class="num">6281006412013</td><td class="num">١٥</td><td class="num">٦٬٠٠٠</td></tr>
+  </tbody>
+</table></div></div></div></div></section><section class="spec" id="CartLine"><h2>CartLine</h2><p class="sum" dir="ltr">One scanned item in the sale cart, with editable quantity and discount and a remove button.</p><div class="frame"><div class="mh demo col" style="max-width:460px"><div class="card" style="padding-block:4px">
+  <div class="cart-line">
+    <div><div class="line-name">رز عنبر ١ كغم</div><div class="muted"><span class="num">6260123400017</span> · <span class="num">٣٬٢٥٠</span> / قطعة</div></div>
+    <div class="line-controls"><label>الكمية<input class="num" value="2" inputmode="decimal"></label><label>خصم<input class="num" value="0" inputmode="numeric"></label><button class="btn small danger" type="button">حذف</button></div>
+  </div>
+</div></div></div></section><section class="spec" id="PayBar"><h2>PayBar</h2><p class="sum" dir="ltr">The amount due and the Pay button: a sticky ticket column on desktop, docked above the tab bar on phones.</p><div class="frame"><div class="mh demo col" style="max-width:420px">
+  <div class="ticket"><span class="muted">المطلوب</span><div class="total-due num">١٢٥٬٠٠٠ د.ع</div><button class="btn large" style="width:100%">دفع</button></div>
+  <div class="paybar"><div><span class="muted" style="font-size:12px">المطلوب</span><div class="total-due num">١٢٥٬٠٠٠ د.ع</div></div><button class="btn">دفع</button></div>
+</div></div></section><section class="spec" id="TopBar"><h2>TopBar</h2><p class="sum" dir="ltr">The dark green bar at the top of single-column apps, with the shop name, the signed-in role and one round action.</p><div class="frame"><div class="mh"><header class="topbar"><div><div class="shop">ماركت الرافدين</div><div class="role">صاحب المحل · وردية مفتوحة</div></div><button class="icon-btn">قفل</button></header></div></div></section><section class="spec" id="Sidebar"><h2>Sidebar</h2><p class="sum" dir="ltr">Desktop navigation from 980px up: brand mark, shop name and a vertical list of screens.</p><div class="frame"><div class="mh" style="background:var(--bg);padding:0"><aside class="side">
+  <div class="brand"><div class="brand-mark">ك</div><div><h1>ماركت الرافدين</h1><p>محاسب الكاشير</p></div></div>
+  <nav class="nav"><button class="active">البيع</button><button>المواد</button><button>الديون</button><button>الورديات</button><button>التقارير</button></nav>
+</aside></div></div></section><section class="spec" id="TabBar"><h2>TabBar</h2><p class="sum" dir="ltr">The fixed bottom navigation on phones and tablets, five items at most.</p><div class="frame"><div class="mh" style="position:relative;height:64px"><nav class="tabbar" style="position:absolute">
+  <button class="active">البيع</button><button>المواد</button><button>الديون</button><button>الوردية</button><button>المزيد</button>
+</nav></div></div></section><section class="spec" id="Toast"><h2>Toast</h2><p class="sum" dir="ltr">A short dark message at the top of the screen confirming an action or reporting why it failed.</p><div class="frame"><div class="mh" style="position:relative;height:64px;background:var(--bg)"><div class="toast" style="position:absolute;top:12px">تم تنزيل الإكسل</div></div></div></section><section class="spec" id="Modal"><h2>Modal</h2><p class="sum" dir="ltr">A sheet over a scrim for a confirmation or a short form that must finish before the user goes on.</p><div class="frame"><div class="mh" style="position:relative;height:280px"><div class="modal" style="position:absolute;place-items:center"><div class="modal-card">
+  <h3>إغلاق الوردية؟</h3>
+  <p class="muted" style="margin:0">النقد المتوقع في الصندوق <span class="num">٥٩٠٬٥٠٠ د.ع</span>. عدّ النقد وسجّله قبل الإغلاق.</p>
+  <div class="modal-actions"><button class="btn secondary">رجوع</button><button class="btn">إغلاق الوردية</button></div>
+</div></div></div></div></section><section class="spec" id="Receipt"><h2>Receipt</h2><p class="sum" dir="ltr">The thermal-printer receipt at 80mm (or 58mm with `paper-58`), always black on white.</p><div class="frame"><div class="mh demo" style="justify-content:center"><div class="receipt">
+  <h3 class="center">ماركت الرافدين</h3>
+  <p class="center">كركوك · <span class="num">0770 123 4567</span></p>
+  <hr>
+  <table><tr><td>رز عنبر ×٢</td><td style="text-align:left" class="num">٦٬٥٠٠</td></tr><tr><td>شاي محمود</td><td style="text-align:left" class="num">٦٬٠٠٠</td></tr></table>
+  <hr>
+  <table><tr><th>المجموع</th><th style="text-align:left" class="num">١٢٬٥٠٠ د.ع</th></tr></table>
+  <p class="center">شكرًا لزيارتكم</p>
+</div></div></div></section>
+</main>
+<script>
+  document.getElementById('theme').addEventListener('click', function () {
+    var r = document.documentElement, dark = r.getAttribute('data-theme') !== 'dark';
+    r.setAttribute('data-theme', dark ? 'dark' : 'light');
+    this.textContent = dark ? 'الوضع الفاتح' : 'الوضع الداكن';
+  });
+</script>
+</body>
+</html>
